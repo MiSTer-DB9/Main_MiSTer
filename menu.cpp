@@ -1230,7 +1230,7 @@ void HandleUI(void)
 
 		// set helptext with core display on top of basic info
 		sprintf(helptext_custom, HELPTEXT_SPACER);
-		strcat(helptext_custom, OsdCoreName());
+		strcat(helptext_custom, OsdCoreNameGet());
 		strcat(helptext_custom, helptexts[HELPTEXT_MAIN]);
 		helptext = helptext_custom;
 		break;
@@ -1344,7 +1344,7 @@ void HandleUI(void)
 			if (!p[0]) OsdCoreNameSet("8BIT");
 			else      OsdCoreNameSet(p);
 
-			OsdSetTitle(OsdCoreName(), 0);
+			OsdSetTitle(OsdCoreNameGet());
 			dip_submenu = -1;
 
 			// add options as requested by core
@@ -1507,7 +1507,7 @@ void HandleUI(void)
 					if (p[0] == 'V')
 					{
 						// get version string
-						strcpy(s, OsdCoreName());
+						strcpy(s, OsdCoreNameGet());
 						strcat(s, " ");
 						substrcpy(s + strlen(s), p, 1);
 						OsdCoreNameSet(s);
@@ -1540,7 +1540,7 @@ void HandleUI(void)
 
 		// set helptext with core display on top of basic info
 		sprintf(helptext_custom, HELPTEXT_SPACER);
-		strcat(helptext_custom, OsdCoreName());
+		strcat(helptext_custom, OsdCoreNameGet());
 		strcat(helptext_custom, helptexts[HELPTEXT_MAIN]);
 		helptext = helptext_custom;
 
@@ -1697,6 +1697,15 @@ void HandleUI(void)
 										mask = 1;
 									}
 								}
+								if (is_pce())
+								{
+									/*if (mask == 1) pcecd_set_image(0, "");
+									if (mask == 2)
+									{*/
+										pcecd_reset();
+										/*mask = 1;
+									}*/
+								}
 
 								uint32_t status = user_io_8bit_set_status(0, 0, ex);
 
@@ -1732,6 +1741,11 @@ void HandleUI(void)
 		}
 		else
 		{
+			if (is_pce())
+			{
+				pcecd_set_image(0, "");
+				pcecd_reset();
+			}
 			user_io_store_filename(SelectedPath);
 			user_io_file_tx(SelectedPath, user_io_ext_idx(SelectedPath, fs_pFileExt) << 6 | ioctl_index, opensave);
 			if (user_io_use_cheats()) cheats_init(SelectedPath, user_io_get_file_crc());
@@ -2732,12 +2746,12 @@ void HandleUI(void)
 
 		s[0] = 0;
 		{
-			int len = strlen(OsdCoreName());
+			int len = strlen(OsdCoreNameGet());
 			if (len > 30) len = 30;
 			int sp = (30 - len) / 2;
 			for (int i = 0; i < sp; i++) strcat(s, " ");
 			char *s2 = s + strlen(s);
-			char *s3 = OsdCoreName();
+			char *s3 = OsdCoreNameGet();
 			for (int i = 0; i < len; i++) *s2++ = *s3++;
 			*s2++ = 0;
 		}
@@ -2877,7 +2891,7 @@ void HandleUI(void)
 		break;
 
 	case MENU_ST_SYSTEM1:
-		menumask = 0x1fff;
+		menumask = 0x3fff;
 		OsdSetTitle("Config", 0);
 		m = 0;
 
@@ -2898,16 +2912,16 @@ void HandleUI(void)
 		snprintf(s, 29, " TOS:       %s", tos_get_image_name());
 		OsdWrite(m++, s, menusub == 4);
 
+		strcpy(s, " Chipset:   ");
+		// extract  TOS_CONTROL_STE and  TOS_CONTROL_MSTE bits
+		strcat(s, atari_chipset[(tos_system_ctrl() >> 23) & 3]);
+		OsdWrite(m++, s, menusub == 5);
+
 		// Blitter is always present in >= STE
 		enable = (tos_system_ctrl() & (TOS_CONTROL_STE | TOS_CONTROL_MSTE)) ? 1 : 0;
 		strcpy(s, " Blitter:   ");
 		strcat(s, ((tos_system_ctrl() & TOS_CONTROL_BLITTER) || enable) ? "On" : "Off");
-		OsdWrite(m++, s, menusub == 5, enable);
-
-		strcpy(s, " Chipset:   ");
-		// extract  TOS_CONTROL_STE and  TOS_CONTROL_MSTE bits
-		strcat(s, atari_chipset[(tos_system_ctrl() >> 23) & 3]);
-		OsdWrite(m++, s, menusub == 6, 0);
+		OsdWrite(m++, s, menusub == 6, enable);
 
 		// Viking card can only be enabled with max 8MB RAM
 		enable = (tos_system_ctrl() & 0xe) <= TOS_MEMCONFIG_8M;
@@ -2915,33 +2929,30 @@ void HandleUI(void)
 		strcat(s, ((tos_system_ctrl() & TOS_CONTROL_VIKING) && enable) ? "On" : "Off");
 		OsdWrite(m++, s, menusub == 7, enable ? 0 : 1);
 
-		/*
-		strcpy(s, " CDC I/O:   ");
-		strcat(s, config_tos_usb[tos_get_cdc_control_redirect()]);
-		OsdWrite(m++, s, menusub == 3, 0);
-		*/
+		strcpy(s, " Aspect:    ");
+		strcat(s, (tos_system_ctrl() & TOS_CONTROL_VIDEO_AR) ? "16:9" : "4:3");
+		OsdWrite(m++, s, menusub == 8);
 
-		OsdWrite(m++);
 		strcpy(s, " Screen:    ");
 		if (tos_system_ctrl() & TOS_CONTROL_VIDEO_COLOR) strcat(s, "Color");
 		else                                             strcat(s, "Mono");
-		OsdWrite(m++, s, menusub == 8, 0);
+		OsdWrite(m++, s, menusub == 9);
 
 		strcpy(s, " Border:    ");
 		if (tos_system_ctrl() & TOS_CONTROL_BORDER) strcat(s, "Visible");
 		else                                        strcat(s, "Full");
-		OsdWrite(m++, s, menusub == 9, 0);
+		OsdWrite(m++, s, menusub == 10);
 
 		strcpy(s, " Scanlines: ");
 		strcat(s, scanlines[(tos_system_ctrl() >> 20) & 3]);
-		OsdWrite(m++, s, menusub == 10, 0);
+		OsdWrite(m++, s, menusub == 11);
 
 		strcpy(s, " YM-Audio:  ");
 		strcat(s, stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
-		OsdWrite(m++, s, menusub == 11, 0);
+		OsdWrite(m++, s, menusub == 12);
 
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 12, 0);
+		OsdWrite(15, STD_EXIT, menusub == 13);
 
 		parentstate = menustate;
 		menustate = MENU_ST_SYSTEM2;
@@ -2954,8 +2965,7 @@ void HandleUI(void)
 			menusub = 3;
 			if(need_reset) tos_reset(1);
 		}
-
-		if (select)
+		else if (select)
 		{
 			switch (menusub)
 			{
@@ -2982,7 +2992,7 @@ void HandleUI(void)
 					// RAM
 					int mem = (tos_system_ctrl() >> 1) & 7;   // current memory config
 					mem++;
-					if (mem > 5) mem = 0;                 // cycle 4MB/8MB/14MB
+					if (mem > 5) mem = 0;
 					tos_update_sysctrl((tos_system_ctrl() & ~0x0e) | (mem << 1));
 					need_reset = 1;
 					menustate = MENU_ST_SYSTEM1;
@@ -2993,33 +3003,19 @@ void HandleUI(void)
 				SelectFile("IMG", SCANO_DIR, MENU_ST_SYSTEM_FILE_SELECTED, MENU_ST_SYSTEM1);
 				break;
 
-				/*
-			case 3:
-				if (tos_get_cdc_control_redirect() == CDC_REDIRECT_MIDI)
-				{
-					tos_set_cdc_control_redirect(CDC_REDIRECT_NONE);
-				}
-				else
-				{
-					tos_set_cdc_control_redirect(tos_get_cdc_control_redirect() + 1);
-				}
-				menustate = MENU_ST_SYSTEM1;
-				break;
-				*/
-
 			case 5:
-				if (!(tos_system_ctrl() & TOS_CONTROL_STE))
 				{
-					tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BLITTER);
+					unsigned long chipset = (tos_system_ctrl() >> 23) + 1;
+					if (chipset == 4) chipset = 0;
+					tos_update_sysctrl((tos_system_ctrl() & ~(TOS_CONTROL_STE | TOS_CONTROL_MSTE)) | (chipset << 23));
 					menustate = MENU_ST_SYSTEM1;
 				}
 				break;
 
 			case 6:
+				if (!(tos_system_ctrl() & TOS_CONTROL_STE))
 				{
-					unsigned long chipset = (tos_system_ctrl() >> 23) + 1;
-					if (chipset == 4) chipset = 0;
-					tos_update_sysctrl((tos_system_ctrl() & ~(TOS_CONTROL_STE | TOS_CONTROL_MSTE)) | (chipset << 23));
+					tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BLITTER);
 					menustate = MENU_ST_SYSTEM1;
 				}
 				break;
@@ -3031,16 +3027,21 @@ void HandleUI(void)
 				break;
 
 			case 8:
-				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_VIDEO_COLOR);
+				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_VIDEO_AR);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
 			case 9:
-				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BORDER);
+				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_VIDEO_COLOR);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
 			case 10:
+				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BORDER);
+				menustate = MENU_ST_SYSTEM1;
+				break;
+
+			case 11:
 				{
 					// next scanline state
 					int scan = ((tos_system_ctrl() >> 20) + 1) & 3;
@@ -3049,13 +3050,13 @@ void HandleUI(void)
 				}
 				break;
 
-			case 11:
+			case 12:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_STEREO);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
 
-			case 12:
+			case 13:
 				menustate = MENU_ST_MAIN1;
 				menusub = 3;
 				if (need_reset) tos_reset(1);
