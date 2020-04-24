@@ -197,6 +197,7 @@ const char *config_stereo_msg[] = { "0%", "25%", "50%", "100%" };
 const char *config_uart_msg[] = { "     None", "      PPP", "  Console", "     MIDI" };
 const char *config_scaler_msg[] = { "Internal","Custom" };
 const char *config_gamma_msg[] = { "Off","On" };
+const char *config_db9type_msg[] = { "--",  "Off", "DB9MD 1 Player", "DB9MD 2 Players", "DB15 1 Players", "DB15 2 Players" }; // Added for DB9 menus
 
 #define DPAD_NAMES 4
 #define DPAD_BUTTON_NAMES 12  //DPAD_NAMES + 6 buttons + start/select
@@ -3244,24 +3245,32 @@ void HandleUI(void)
 			}
 		}
 
-		m = 4;
+		m = 3;
 		sprintf(s, " Floppy disk turbo : %s", minimig_config.floppy.speed ? "on" : "off");
 		OsdWrite(m++, s, menusub == 4, 0);
 		OsdWrite(m++);
-
-		OsdWrite(m++, " Hard disks", menusub == 5, 0);
-		OsdWrite(m++, " CPU & Chipset", menusub == 6, 0);
-		OsdWrite(m++, " Memory", menusub == 7, 0);
-		OsdWrite(m++, " Audio & Video", menusub == 8, 0);
+		
+		// Added DB9 menus INIT
+		if (minimig_config.db9type == 0) minimig_config.db9type =1;
+		sprintf(s, " UserIO Joys: ");
+		strcat(s, config_db9type_msg[minimig_config.db9type & 7]);
+		OsdWrite(m++, s, menusub == 5, 0);
+		// Added DB9 menus END
+		
+        OsdWrite(m++);
+		OsdWrite(m++, " Hard disks", menusub == 6, 0);
+		OsdWrite(m++, " CPU & Chipset", menusub == 7, 0);
+		OsdWrite(m++, " Memory", menusub == 8, 0);
+		OsdWrite(m++, " Audio & Video", menusub == 9, 0);
 		OsdWrite(m++);
 
-		OsdWrite(m++, " Save configuration", menusub == 9, 0);
-		OsdWrite(m++, " Load configuration", menusub == 10, 0);
+		OsdWrite(m++, " Save configuration", menusub == 10, 0);
+		OsdWrite(m++, " Load configuration", menusub == 11, 0);
 
-		OsdWrite(m++);
-		OsdWrite(m++, " Reset", menusub == 11, 0);
-
-		OsdWrite(15, STD_EXIT, menusub == 12, 0);
+		//OsdWrite(m++);
+		OsdWrite(m++, " Reset", menusub == 12, 0);
+		//for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
+		OsdWrite(15, STD_EXIT, menusub == 13, 0);
 
 		menustate = MENU_MAIN2;
 		parentstate = MENU_MAIN1;
@@ -3312,42 +3321,59 @@ void HandleUI(void)
 					minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
 					menustate = MENU_MAIN1;
 				}
-				else if (menusub == 5)	// Go to harddrives page.
+
+				// Added DB9 menus INIT
+				else if (menusub == 5)	// DB9 Options
+				{
+					if 	(minimig_config.db9type == 0) {
+						 minimig_config.db9type = 2;
+					} else if (minimig_config.db9type == 5) {
+						minimig_config.db9type = 1 ;
+					} else {
+						minimig_config.db9type = minimig_config.db9type + 1 ;
+					}
+					minimig_ConfigDB9Type(minimig_config.db9type);
+					menustate = MENU_MAIN1;
+					
+				}
+				// Added DB9 menus END
+
+				else if (menusub == 6)	// Go to harddrives page.
 				{
 					menustate = MENU_SETTINGS_HARDFILE1;
 					menusub = 0;
 				}
-				else if (menusub == 6)
+				else if (menusub == 7)
 				{
 					menustate = MENU_SETTINGS_CHIPSET1;
 					menusub = 0;
 				}
-				else if (menusub == 7)
+				else if (menusub == 8)
 				{
 					menustate = MENU_SETTINGS_MEMORY1;
 					menusub = 0;
 				}
-				else if (menusub == 8)
+				else if (menusub == 9)
 				{
 					menustate = MENU_SETTINGS_VIDEO1;
 					menusub = 0;
 				}
-				else if (menusub == 9)
+				else if (menusub == 10)
 				{
 					menusub = 0;
 					menustate = MENU_SAVECONFIG_1;
 				}
-				else if (menusub == 10)
+				else if (menusub == 11)
 				{
 					menusub = 0;
 					menustate = MENU_LOADCONFIG_1;
 				}
-				else if (menusub == 11)
+				else if (menusub == 12)
 				{
 					menustate = MENU_NONE1;
 					minimig_reset();
 				}
-				else if (menusub == 12)
+				else if (menusub == 13)
 				{
 					menustate = MENU_NONE1;
 				}
@@ -3856,7 +3882,7 @@ void HandleUI(void)
 		if (select)
 		{
 			int fastcfg = ((minimig_config.memory >> 4) & 0x03) | ((minimig_config.memory & 0x80) >> 5);
-			sprintf(minimig_config.info, "%s/%s/%s%s %s%s%s%s%s%s\n",
+			sprintf(minimig_config.info, "%s/%s/%s%s %s%s%s%s%s%s/%s\n",
 				config_cpu_msg[minimig_config.cpu & 0x03] + 2,
 				config_chipset_msg[(minimig_config.chipset >> 2) & 7],
 				minimig_config.chipset & CONFIG_NTSC ? "N" : "P",
@@ -3869,7 +3895,8 @@ void HandleUI(void)
 				fastcfg ? config_memory_fast_msg[(minimig_config.cpu>>1) & 1][fastcfg] : "",
 				((minimig_config.memory >> 2) & 0x03) ? "+" : "",
 				((minimig_config.memory >> 2) & 0x03) ? config_memory_slow_msg[(minimig_config.memory >> 2) & 0x03] : "",
-				(minimig_config.memory & 0x40) ? " HRT" : ""
+				(minimig_config.memory & 0x40) ? " HRT" : "",
+				config_db9type_msg[minimig_config.db9type & 7]  // 8 bytes							
 			);
 
 			char *p = strrchr(minimig_config.kickstart, '/');
@@ -3994,14 +4021,14 @@ void HandleUI(void)
 			else if (menusub == 7)
 			{
 				menustate = MENU_MAIN1;
-				menusub = 6;
+				menusub = 7;
 			}
 		}
 
 		if (menu)
 		{
 			menustate = MENU_MAIN1;
-			menusub = 6;
+			menusub = 7;
 		}
 		else if (right)
 		{
@@ -4086,14 +4113,14 @@ void HandleUI(void)
 			else if (menusub == 5)
 			{
 				menustate = MENU_MAIN1;
-				menusub = 7;
+				menusub = 8;
 			}
 		}
 
 		if (menu)
 		{
 			menustate = MENU_MAIN1;
-			menusub = 7;
+			menusub = 8;
 		}
 		else if (right)
 		{
@@ -4197,14 +4224,14 @@ void HandleUI(void)
 			else if (menusub == 9 && select) // return to previous menu
 			{
 				menustate = MENU_MAIN1;
-				menusub = 5;
+				menusub = 6;
 			}
 		}
 
 		if (menu) // return to previous menu
 		{
 			menustate = MENU_MAIN1;
-			menusub = 5;
+			menusub = 6;
 		}
 		else if (right)
 		{
@@ -4361,14 +4388,14 @@ void HandleUI(void)
 			else if (menusub == 6)
 			{
 				menustate = MENU_MAIN1;
-				menusub = 8;
+				menusub = 9;
 			}
 		}
 
 		if (menu)
 		{
 			menustate = MENU_MAIN1;
-			menusub = 8;
+			menusub = 9;
 		}
 		else if (right)
 		{
@@ -4496,7 +4523,7 @@ void HandleUI(void)
 					}
 				}
 				break;
-			}
+ 			}
 		}
 		printSysInfo();
 		break;

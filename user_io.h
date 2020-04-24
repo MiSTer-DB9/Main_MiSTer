@@ -94,6 +94,7 @@
 #define UIO_MM2_FLP     0xF7 //0x44
 #define UIO_MM2_HDD     0xF8 //0x54
 #define UIO_MM2_JOY     0xF9 //0x64
+#define UIO_MM2_DB9TYPE 0xFA 
 
 #define JOY_RIGHT       0x01
 #define JOY_LEFT        0x02
@@ -245,6 +246,7 @@ int user_io_is_dualsdr();
 uint16_t altcfg(int alt = -1);
 
 int GetUARTMode();
+int SetUARTMode(int mode);
 int GetMidiLinkMode();
 void SetMidiLinkMode(int mode);
 
