@@ -12,6 +12,12 @@
 
 #define CONFIG_FILENAME  "ATARIST0.CFG"
 
+const char* tos_mem[] = { "512kb", "1mb", "2mb", "4mb", "8mb", "14mb", "--", "--" };
+const char* tos_scanlines[] = { "Off","25%","50%","75%" };
+const char* tos_stereo[] = { "Mono","Stereo" };
+const char* tos_chipset[] = { "ST","STE","MegaSTE","STEroids" };
+const char* tos_chipset_short[] = { "ST","STe","MST","ST+" };
+
 typedef struct {
 	unsigned long system_ctrl;  // system control word
 	char tos_img[1024];
@@ -49,8 +55,11 @@ static const char *acsi_cmd_name(int cmd) {
 	return cmdname[cmd];
 }
 
+static int uart_mode = 0;
 static void set_control(uint32_t ctrl)
 {
+	ctrl = uart_mode ? (ctrl | TOS_CONTROL_REDIR0) : (ctrl & ~TOS_CONTROL_REDIR0);
+
 	spi_uio_cmd_cont(UIO_SET_STATUS2);
 	spi32w(ctrl);
 	DisableIO();
@@ -59,6 +68,17 @@ static void set_control(uint32_t ctrl)
 void tos_update_sysctrl(uint32_t ctrl)
 {
 	config.system_ctrl = ctrl;
+	set_control(config.system_ctrl);
+}
+
+unsigned long tos_system_ctrl()
+{
+	return config.system_ctrl;
+}
+
+void tos_uart_mode(int enable)
+{
+	uart_mode = enable;
 	set_control(config.system_ctrl);
 }
 
@@ -93,7 +113,7 @@ static void dma_ack(uint8_t status)
 	DisableIO();
 }
 
-static void dma_nak(void)
+static void dma_nak()
 {
 	EnableIO();
 	spi8(ST_NAK_DMA);
@@ -491,11 +511,6 @@ void tos_eject_all()
 	for (int i = 0; i < 4; i++) tos_insert_disk(i, "");
 }
 
-unsigned long tos_system_ctrl(void)
-{
-	return config.system_ctrl;
-}
-
 void tos_reset(char cold)
 {
 	tos_update_sysctrl(config.system_ctrl | TOS_CONTROL_CPU_RESET);  // set reset
@@ -551,16 +566,12 @@ void tos_config_load(int slot)
 	tos_eject_all();
 
 	new_slot = (slot == -1) ? last_slot : slot;
+	memset(&config, 0, sizeof(config));
 
 	// set default values
-	config.system_ctrl = TOS_MEMCONFIG_4M | TOS_CONTROL_BLITTER | TOS_CONTROL_VIDEO_COLOR;
+	config.system_ctrl = TOS_MEMCONFIG_1M | TOS_CONTROL_VIDEO_COLOR | TOS_CONTROL_BORDER;
 	strcpy(config.tos_img, user_io_get_core_path());
 	strcat(config.tos_img, "/TOS.IMG");
-	config.cart_img[0] = 0;
-	strcpy(config.acsi_img[0], "HARDDISK.VHD");
-	config.acsi_img[1][0] = 0;
-	config.video_adjust[0] = config.video_adjust[1] = 0;
-	config.cdc_control_redirect = 0;
 
 	// try to load config
 	name[7] = '0' + new_slot;
@@ -586,4 +597,50 @@ int tos_config_exists(int slot)
 	char name[64] = { CONFIG_FILENAME };
 	name[7] = '0' + slot;
 	return FileLoadConfig(name, 0, 0);
+}
+
+const char* tos_get_cfg_string(int num)
+{
+	static char str[256];
+
+	char name[64] = { CONFIG_FILENAME };
+	name[7] = '0' + num;
+
+	static tos_config_t tmp;
+	memset(&tmp, 0, sizeof(tmp));
+
+	int len = FileLoadConfig(name, 0, 0);
+	if (len == sizeof(tos_config_t))
+	{
+		FileLoadConfig(name, &tmp, sizeof(tos_config_t));
+
+		memset(str, 0, sizeof(str));
+		strcat(str, tos_mem[(tmp.system_ctrl >> 1) & 7]);
+		strcat(str, " ");
+		if (tmp.acsi_img[0][0]) strcat(str, "H0 ");
+		if (tmp.acsi_img[1][0]) strcat(str, "H1 ");
+		if (tmp.cart_img[0]) strcat(str, "CR ");
+		strcat(str, tos_chipset_short[(tmp.system_ctrl >> 23) & 3]);
+		strcat(str, " ");
+		if (!((tmp.system_ctrl >> 23) & 3) && (tmp.system_ctrl & TOS_CONTROL_BLITTER)) strcat(str, "B ");
+		if (tmp.system_ctrl & TOS_CONTROL_VIKING) strcat(str, "V ");
+		if (tmp.system_ctrl & TOS_CONTROL_VIDEO_AR) strcat(str, "W ");
+		strcat(str, (tmp.system_ctrl & TOS_CONTROL_VIDEO_COLOR) ? "C " : (tmp.system_ctrl & TOS_CONTROL_MDE60) ? "M6 " : "M ");
+		if (!(tmp.system_ctrl & TOS_CONTROL_BORDER)) strcat(str, "F ");
+		int sl = (tmp.system_ctrl >> 20) & 3;
+		if (sl) sprintf(str + strlen(str), "S%d ", sl);
+		strcat(str, (tmp.system_ctrl & TOS_CONTROL_STEREO) ? "AS " : "AM ");
+
+		if (tmp.tos_img[0])
+		{
+			char *p = strrchr(tmp.tos_img, '/');
+			if (!p) p = tmp.tos_img; else p++;
+			int len = strlen(p);
+			if (len >= 4) len -= 4;
+			memcpy(str + strlen(str), p, len);
+		}
+		return str;
+	}
+
+	return "< empty slot >";
 }

@@ -565,6 +565,17 @@ int GetUARTMode()
 	return 0;
 }
 
+void SetUARTMode(int mode)
+{
+	if (is_st()) tos_uart_mode(mode != 3);
+	MakeFile("/tmp/CORENAME", user_io_get_core_name_ex());
+	MakeFile("/tmp/UART_SPEED", is_st() ? "19200" : "115200");
+
+	char cmd[32];
+	sprintf(cmd, "uartmode %d", mode & 0xFF);
+	system(cmd);
+}
+
 int GetMidiLinkMode()
 {
 	struct stat filestat;
@@ -577,7 +588,6 @@ int GetMidiLinkMode()
 
 void SetMidiLinkMode(int mode)
 {
-	MakeFile("/tmp/CORENAME", user_io_get_core_name_ex());
 	remove("/tmp/ML_FSYNTH");
 	remove("/tmp/ML_MUNT");
 	remove("/tmp/ML_UDP");
@@ -941,12 +951,9 @@ void user_io_init(const char *path, const char *xml)
 		FileLoadConfig(mainpath, &mode, 4);
 	}
 
-	char cmd[32];
-	system("uartmode 0");
-
+	SetUARTMode(0);
 	SetMidiLinkMode((mode >> 8) & 0xFF);
-	sprintf(cmd, "uartmode %d", mode & 0xFF);
-	system(cmd);
+	SetUARTMode(mode);
 }
 
 static int joyswap = 0;
@@ -2353,6 +2360,14 @@ void user_io_poll()
 							if (is_megacd())
 							{
 								mcd_fill_blanksave(buffer[disk], lba);
+							}
+							else if (is_pce())
+							{
+								memset(buffer[disk], 0, sizeof(buffer[disk]));
+								if (!lba)
+								{
+									memcpy(buffer[disk], "HUBM\x00\x88\x10\x80", 8);
+								}
 							}
 							else
 							{

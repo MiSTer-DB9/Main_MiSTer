@@ -179,9 +179,7 @@ static uint32_t menu_timer = 0;
 
 extern const char *version;
 
-const char *config_tos_mem[] = { "512 kB", "1 MB", "2 MB", "4 MB", "8 MB", "14 MB", "--", "--" };
 const char *config_tos_wrprot[] = { "None", "A:", "B:", "A: and B:" };
-const char *config_tos_usb[] = { "none", "control", "debug", "serial", "parallel", "midi" };
 
 const char *config_scanlines_msg[] = { "Off", "HQ2x", "CRT 25%" , "CRT 50%" , "CRT 75%" };
 const char *config_ar_msg[] = { "4:3", "16:9" };
@@ -228,10 +226,6 @@ static const char *info_bottom = "\x85\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x
 // one screen width
 static const char* HELPTEXT_SPACER = "                                ";
 static char helptext_custom[1024];
-
-const char* scanlines[] = { "Off","25%","50%","75%" };
-const char* stereo[] = { "Mono","Stereo" };
-const char* atari_chipset[] = { "ST","STE","MegaSTE","STEroids" };
 
 // file selection menu variables
 static char fs_pFileExt[13] = "xxx";
@@ -1162,6 +1156,7 @@ void HandleUI(void)
 					}
 					else
 					{
+						parentstate = MENU_NONE1;
 						menustate = MENU_8BIT_MAIN1;
 					}
 				}
@@ -1332,6 +1327,7 @@ void HandleUI(void)
 		hdmask = spi_w(0);
 		DisableIO();
 		user_io_read_confstr();
+		uint32_t s_entry = 0;
 		int entry = 0;
 		while(1)
 		{
@@ -1391,6 +1387,7 @@ void HandleUI(void)
 						// check for 'F'ile or 'S'D image strings
 						if ((p[0] == 'F') || (p[0] == 'S'))
 						{
+							if (p[0] == 'S') s_entry = selentry;
 							substrcpy(s, p, 2);
 							if (strlen(s))
 							{
@@ -1524,6 +1521,12 @@ void HandleUI(void)
 			MenuWrite(entry, STD_EXIT, menusub == selentry, 0, OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
 			menusub_last = selentry;
 			menumask = (menumask << 1) | 1;
+
+			if (parentstate == MENU_NONE1 && is_pce() && pcecd_using_cd() && menusub != s_entry)
+			{
+				menusub = s_entry;
+				continue;
+			}
 
 			if (!adjvisible) break;
 			firstmenu += adjvisible;
@@ -1698,15 +1701,8 @@ void HandleUI(void)
 										mask = 1;
 									}
 								}
-								if (is_pce())
-								{
-									/*if (mask == 1) pcecd_set_image(0, "");
-									if (mask == 2)
-									{*/
-										pcecd_reset();
-										/*mask = 1;
-									}*/
-								}
+
+								if (is_pce() && mask == 1) pcecd_reset();
 
 								uint32_t status = user_io_8bit_set_status(0, 0, ex);
 
@@ -1776,6 +1772,7 @@ void HandleUI(void)
 		else if (is_pce())
 		{
 			pcecd_set_image(ioctl_index, SelectedPath);
+			cheats_init(SelectedPath, 0);
 		}
 		else
 		{
@@ -2246,8 +2243,7 @@ void HandleUI(void)
 					uint mode = GetUARTMode() + 1;
 					if (mode > sizeof(config_uart_msg) / sizeof(config_uart_msg[0])) mode = 0;
 
-					sprintf(s, "uartmode %d", mode);
-					system(s);
+					SetUARTMode(mode);
 					menustate = MENU_UART1;
 				}
 				break;
@@ -2258,10 +2254,8 @@ void HandleUI(void)
 				{
 					int mode = GetUARTMode();
 					SetMidiLinkMode(GetMidiLinkMode() ^ ((menusub == 1) ? 2 : 1));
-					sprintf(s, "uartmode %d", 0);
-					system(s);
-					sprintf(s, "uartmode %d", mode);
-					system(s);
+					SetUARTMode(0);
+					SetUARTMode(mode);
 					menustate = MENU_UART1;
 				}
 				break;
@@ -2270,10 +2264,8 @@ void HandleUI(void)
 					int mode = GetUARTMode();
 					if(mode != 0)
 					{
-						sprintf(s, "uartmode %d", 0);
-						system(s);
-						sprintf(s, "uartmode %d", mode);
-						system(s);
+						SetUARTMode(0);
+						SetUARTMode(mode);
 						menustate = MENU_8BIT_SYSTEM1;
 					}
 				}
@@ -2892,7 +2884,7 @@ void HandleUI(void)
 		break;
 
 	case MENU_ST_SYSTEM1:
-		menumask = 0x3fff;
+		menumask = 0x7fff;
 		OsdSetTitle("Config", 0);
 		m = 0;
 
@@ -2907,7 +2899,7 @@ void HandleUI(void)
 
 		OsdWrite(m++);
 		strcpy(s, " Memory:    ");
-		strcat(s, config_tos_mem[(tos_system_ctrl() >> 1) & 7]);
+		strcat(s, tos_mem[(tos_system_ctrl() >> 1) & 7]);
 		OsdWrite(m++, s, menusub == 3);
 
 		snprintf(s, 29, " TOS:       %s", tos_get_image_name());
@@ -2915,7 +2907,7 @@ void HandleUI(void)
 
 		strcpy(s, " Chipset:   ");
 		// extract  TOS_CONTROL_STE and  TOS_CONTROL_MSTE bits
-		strcat(s, atari_chipset[(tos_system_ctrl() >> 23) & 3]);
+		strcat(s, tos_chipset[(tos_system_ctrl() >> 23) & 3]);
 		OsdWrite(m++, s, menusub == 5);
 
 		// Blitter is always present in >= STE
@@ -2939,21 +2931,26 @@ void HandleUI(void)
 		else                                             strcat(s, "Mono");
 		OsdWrite(m++, s, menusub == 9);
 
+		strcpy(s, " Mono 60Hz: ");
+		if (tos_system_ctrl() & TOS_CONTROL_MDE60) strcat(s, "On");
+		else                                       strcat(s, "Off");
+		OsdWrite(m++, s, menusub == 10);
+
 		strcpy(s, " Border:    ");
 		if (tos_system_ctrl() & TOS_CONTROL_BORDER) strcat(s, "Visible");
 		else                                        strcat(s, "Full");
-		OsdWrite(m++, s, menusub == 10);
-
-		strcpy(s, " Scanlines: ");
-		strcat(s, scanlines[(tos_system_ctrl() >> 20) & 3]);
 		OsdWrite(m++, s, menusub == 11);
 
-		strcpy(s, " YM-Audio:  ");
-		strcat(s, stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
+		strcpy(s, " Scanlines: ");
+		strcat(s, tos_scanlines[(tos_system_ctrl() >> 20) & 3]);
 		OsdWrite(m++, s, menusub == 12);
 
+		strcpy(s, " YM-Audio:  ");
+		strcat(s, tos_stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
+		OsdWrite(m++, s, menusub == 13);
+
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 13);
+		OsdWrite(15, STD_EXIT, menusub == 14);
 
 		parentstate = menustate;
 		menustate = MENU_ST_SYSTEM2;
@@ -2963,7 +2960,7 @@ void HandleUI(void)
 		if (menu)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 3;
+			menusub = 4;
 			if(need_reset) tos_reset(1);
 		}
 		else if (select)
@@ -3038,11 +3035,16 @@ void HandleUI(void)
 				break;
 
 			case 10:
-				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BORDER);
+				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_MDE60);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
 			case 11:
+				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BORDER);
+				menustate = MENU_ST_SYSTEM1;
+				break;
+
+			case 12:
 				{
 					// next scanline state
 					int scan = ((tos_system_ctrl() >> 20) + 1) & 3;
@@ -3051,15 +3053,15 @@ void HandleUI(void)
 				}
 				break;
 
-			case 12:
+			case 13:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_STEREO);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
 
-			case 13:
+			case 14:
 				menustate = MENU_ST_MAIN1;
-				menusub = 3;
+				menusub = 4;
 				if (need_reset) tos_reset(1);
 				break;
 			}
@@ -3088,32 +3090,31 @@ void HandleUI(void)
 
 	case MENU_ST_LOAD_CONFIG1:
 		helptext = helptexts[HELPTEXT_NONE];
-		m = 0;
-		if (parentstate != menustate)	// First run?
-		{
-			menumask = 0x21;
-			if (tos_config_exists(1)) menumask |= 0x02;
-			if (tos_config_exists(2)) menumask |= 0x04;
-			if (tos_config_exists(3)) menumask |= 0x08;
-			if (tos_config_exists(4)) menumask |= 0x10;
-		}
-		parentstate = menustate;
-		parentstate = menustate;
 		OsdSetTitle("Load Config", 0);
 
+		if (parentstate != menustate)	// First run?
+		{
+			parentstate = menustate;
+			menumask = 0x201;
+			for (uint32_t i = 1; i < 9; i++) if (tos_config_exists(i)) menumask |= 1<<i;
+		}
+
+		m = 0;
 		OsdWrite(m++);
-		OsdWrite(m++);
-		OsdWrite(m++);
-		OsdWrite(m++);
-		OsdWrite(m++, "          Default", menusub == 0);
-		OsdWrite(m++);
-		OsdWrite(m++, "             1", menusub == 1, !(menumask & 0x02));
-		OsdWrite(m++, "             2", menusub == 2, !(menumask & 0x04));
-		OsdWrite(m++, "             3", menusub == 3, !(menumask & 0x08));
-		OsdWrite(m++, "             4", menusub == 4, !(menumask & 0x10));
+		OsdWrite(m++, " Startup config:");
+		for (uint32_t i = 0; i < 9; i++)
+		{
+			snprintf(s, 29, "  %s", (menumask & (1 << i)) ? tos_get_cfg_string(i) : "");
+			OsdWrite(m++, s, menusub == i, !(menumask & (1<<i)));
+			if (!i)
+			{
+				OsdWrite(m++);
+				OsdWrite(m++, " Other configs:");
+			}
+		}
 
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 5, 0);
+		OsdWrite(15, STD_EXIT, menusub == 9, 0);
 
 		menustate = MENU_ST_LOAD_CONFIG2;
 		break;
@@ -3122,12 +3123,12 @@ void HandleUI(void)
 		if (menu)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 4;
+			menusub = 5;
 		}
 
 		if (select)
 		{
-			if (menusub < 5)
+			if (menusub < 9)
 			{
 				tos_config_load(menusub);
 				tos_upload(NULL);
@@ -3136,31 +3137,34 @@ void HandleUI(void)
 			else
 			{
 				menustate = MENU_ST_MAIN1;
-				menusub = 4;
+				menusub = 5;
 			}
 		}
 		break;
 
 	case MENU_ST_SAVE_CONFIG1:
 		helptext = helptexts[HELPTEXT_NONE];
-		menumask = 0x3f;
-		m = 0;
-		parentstate = menustate;
 		OsdSetTitle("Save Config", 0);
 
+		parentstate = menustate;
+		menumask = 0x3FF;
+
+		m = 0;
 		OsdWrite(m++);
-		OsdWrite(m++);
-		OsdWrite(m++);
-		OsdWrite(m++);
-		OsdWrite(m++, "          Default", menusub == 0, 0);
-		OsdWrite(m++);
-		OsdWrite(m++, "             1", menusub == 1, 0);
-		OsdWrite(m++, "             2", menusub == 2, 0);
-		OsdWrite(m++, "             3", menusub == 3, 0);
-		OsdWrite(m++, "             4", menusub == 4, 0);
+		OsdWrite(m++, " Startup config:");
+		for (uint32_t i = 0; i < 9; i++)
+		{
+			snprintf(s, 29, "  %s", tos_get_cfg_string(i));
+			OsdWrite(m++, s, menusub == i, !(menumask & (1 << i)));
+			if (!i)
+			{
+				OsdWrite(m++);
+				OsdWrite(m++, " Other configs:");
+			}
+		}
 
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 5, 0);
+		OsdWrite(15, STD_EXIT, menusub == 9, 0);
 
 		menustate = MENU_ST_SAVE_CONFIG2;
 		break;
@@ -3169,12 +3173,12 @@ void HandleUI(void)
 		if (menu)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 5;
+			menusub = 6;
 		}
 
 		if (select)
 		{
-			if (menusub < 5)
+			if (menusub < 9)
 			{
 				tos_config_save(menusub);
 				menustate = MENU_NONE1;
@@ -3182,7 +3186,7 @@ void HandleUI(void)
 			else
 			{
 				menustate = MENU_ST_MAIN1;
-				menusub = 5;
+				menusub = 6;
 			}
 		}
 		break;

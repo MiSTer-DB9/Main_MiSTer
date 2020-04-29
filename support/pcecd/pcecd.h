@@ -22,7 +22,7 @@
 #define PCECD_STATUS_CHECK_COND		1
 #define PCECD_STATUS_CONDITION_MET	2
 #define PCECD_STATUS_BUSY			4
-#define PCECD_STATUS_INTERMEDIATE	8 
+#define PCECD_STATUS_INTERMEDIATE	8
 
 #define SENSEKEY_NO_SENSE			0x0
 #define SENSEKEY_NOT_READY			0x2
@@ -30,7 +30,7 @@
 #define SENSEKEY_HARDWARE_ERROR		0x4
 #define SENSEKEY_ILLEGAL_REQUEST	0x5
 #define SENSEKEY_UNIT_ATTENTION		0x6
-#define SENSEKEY_ABORTED_COMMAND	0xB 
+#define SENSEKEY_ABORTED_COMMAND	0xB
 
 #define NSE_NO_DISC					0x0B
 #define NSE_TRAY_OPEN				0x0D
@@ -44,8 +44,12 @@
 #define NSE_END_OF_VOLUME			0x25
 #define NSE_INVALID_REQUEST_IN_CDB	0x27
 #define NSE_DISC_CHANGED			0x28
-#define NSE_AUDIO_NOT_PLAYING		0x2C 
+#define NSE_AUDIO_NOT_PLAYING		0x2C
 
+#define PCECD_CDDAMODE_SILENT		0x00
+#define PCECD_CDDAMODE_NORMAL		0x01
+#define PCECD_CDDAMODE_INTERRUPT	0x02
+#define PCECD_CDDAMODE_LOOP			0x03
 
 #include "../../cd.h"
 
@@ -77,20 +81,20 @@ public:
 	void CommandExec();
 	int GetStatus(uint8_t* buf);
 	int SetCommand(uint8_t* buf);
-	void SendStatus(uint8_t status, uint8_t message);
+	void PendStatus(uint8_t status, uint8_t message);
 
 private:
 	toc_t toc;
 	int index;
 	int lba;
 	int cnt;
-	uint16_t sectorSize;
 	int scanOffset;
 	int audioLength;
 	int audioOffset;
 	//uint8_t state;
 	int CDDAStart;
 	int CDDAEnd;
+	uint8_t CDDAMode;
 	sense_t sense;
 
 	uint8_t stat[2];
@@ -123,5 +127,6 @@ void pcecd_poll();
 void pcecd_set_image(int num, const char *filename);
 int pcecd_send_data(uint8_t* buf, int len, uint8_t index);
 void pcecd_reset();
+int pcecd_using_cd();
 
 #endif

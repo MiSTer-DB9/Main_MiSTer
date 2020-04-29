@@ -66,9 +66,16 @@
 #define TOS_CONTROL_VIKING        0x10000000   // Viking graphics card
 
 #define TOS_CONTROL_BORDER        0x20000000
+#define TOS_CONTROL_MDE60         0x40000000
 
-unsigned long tos_system_ctrl(void);
+extern const char* tos_mem[];
+extern const char* tos_scanlines[];
+extern const char* tos_stereo[];
+extern const char* tos_chipset[];
 
+const char* tos_get_cfg_string(int num);
+
+unsigned long tos_system_ctrl();
 void tos_upload(const char *);
 void tos_poll();
 void tos_update_sysctrl(uint32_t ctrl);
@@ -85,5 +92,7 @@ void tos_load_cartridge(const char *);
 void tos_config_load(int slot); // slot -1 == last config
 void tos_config_save(int slot);
 int tos_config_exists(int slot);
+
+void tos_uart_mode(int enable);
 
 #endif

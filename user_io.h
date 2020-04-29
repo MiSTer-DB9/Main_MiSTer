@@ -246,7 +246,7 @@ int user_io_is_dualsdr();
 uint16_t altcfg(int alt = -1);
 
 int GetUARTMode();
-int SetUARTMode(int mode);
+void SetUARTMode(int mode);
 int GetMidiLinkMode();
 void SetMidiLinkMode(int mode);
 
