@@ -195,7 +195,7 @@ const char *config_stereo_msg[] = { "0%", "25%", "50%", "100%" };
 const char *config_uart_msg[] = { "     None", "      PPP", "  Console", "     MIDI" };
 const char *config_scaler_msg[] = { "Internal","Custom" };
 const char *config_gamma_msg[] = { "Off","On" };
-const char *config_db9type_msg[] = { "--",  "Off", "DB9MD 1 Player", "DB9MD 2 Players", "DB15 1 Players", "DB15 2 Players" }; // Added for DB9 menus
+const char *config_db9type_msg[] = { "--",  "Off", "DB9MD 1 Player", "DB9MD 2 Players", "DB15 1 Player", "DB15 2 Players" }; // Added for DB9 menus
 
 #define DPAD_NAMES 4
 #define DPAD_BUTTON_NAMES 12  //DPAD_NAMES + 6 buttons + start/select
@@ -2884,7 +2884,7 @@ void HandleUI(void)
 		break;
 
 	case MENU_ST_SYSTEM1:
-		menumask = 0x7fff;
+		menumask = 0xffff;
 		OsdSetTitle("Config", 0);
 		m = 0;
 
@@ -2897,60 +2897,66 @@ void HandleUI(void)
 		snprintf(s, 29, " Cart: %s", tos_get_cartridge_name());
 		OsdWrite(m++, s, menusub == 2);
 
-		OsdWrite(m++);
+		if (tos_get_db9type() == 0) {
+			tos_set_db9type(1);
+		}
+		strcpy(s, " UserIO Joys: ");
+		strcat(s, config_db9type_msg[tos_get_db9type()]);
+		OsdWrite(m++, s, menusub == 3, 0);
+
 		strcpy(s, " Memory:    ");
 		strcat(s, tos_mem[(tos_system_ctrl() >> 1) & 7]);
-		OsdWrite(m++, s, menusub == 3);
+		OsdWrite(m++, s, menusub == 4);
 
 		snprintf(s, 29, " TOS:       %s", tos_get_image_name());
-		OsdWrite(m++, s, menusub == 4);
+		OsdWrite(m++, s, menusub == 5);
 
 		strcpy(s, " Chipset:   ");
 		// extract  TOS_CONTROL_STE and  TOS_CONTROL_MSTE bits
 		strcat(s, tos_chipset[(tos_system_ctrl() >> 23) & 3]);
-		OsdWrite(m++, s, menusub == 5);
+		OsdWrite(m++, s, menusub == 6);
 
 		// Blitter is always present in >= STE
 		enable = (tos_system_ctrl() & (TOS_CONTROL_STE | TOS_CONTROL_MSTE)) ? 1 : 0;
 		strcpy(s, " Blitter:   ");
 		strcat(s, ((tos_system_ctrl() & TOS_CONTROL_BLITTER) || enable) ? "On" : "Off");
-		OsdWrite(m++, s, menusub == 6, enable);
+		OsdWrite(m++, s, menusub == 7, enable);
 
 		// Viking card can only be enabled with max 8MB RAM
 		enable = (tos_system_ctrl() & 0xe) <= TOS_MEMCONFIG_8M;
 		strcpy(s, " Viking:    ");
 		strcat(s, ((tos_system_ctrl() & TOS_CONTROL_VIKING) && enable) ? "On" : "Off");
-		OsdWrite(m++, s, menusub == 7, enable ? 0 : 1);
+		OsdWrite(m++, s, menusub == 8, enable ? 0 : 1);
 
 		strcpy(s, " Aspect:    ");
 		strcat(s, (tos_system_ctrl() & TOS_CONTROL_VIDEO_AR) ? "16:9" : "4:3");
-		OsdWrite(m++, s, menusub == 8);
+		OsdWrite(m++, s, menusub == 9);
 
 		strcpy(s, " Screen:    ");
 		if (tos_system_ctrl() & TOS_CONTROL_VIDEO_COLOR) strcat(s, "Color");
 		else                                             strcat(s, "Mono");
-		OsdWrite(m++, s, menusub == 9);
+		OsdWrite(m++, s, menusub == 10);
 
 		strcpy(s, " Mono 60Hz: ");
 		if (tos_system_ctrl() & TOS_CONTROL_MDE60) strcat(s, "On");
 		else                                       strcat(s, "Off");
-		OsdWrite(m++, s, menusub == 10);
+		OsdWrite(m++, s, menusub == 11);
 
 		strcpy(s, " Border:    ");
 		if (tos_system_ctrl() & TOS_CONTROL_BORDER) strcat(s, "Visible");
 		else                                        strcat(s, "Full");
-		OsdWrite(m++, s, menusub == 11);
+		OsdWrite(m++, s, menusub == 12);
 
 		strcpy(s, " Scanlines: ");
 		strcat(s, tos_scanlines[(tos_system_ctrl() >> 20) & 3]);
-		OsdWrite(m++, s, menusub == 12);
+		OsdWrite(m++, s, menusub == 13);
 
 		strcpy(s, " YM-Audio:  ");
 		strcat(s, tos_stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
-		OsdWrite(m++, s, menusub == 13);
+		OsdWrite(m++, s, menusub == 14);
 
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 14);
+		OsdWrite(15, STD_EXIT, menusub == 15);
 
 		parentstate = menustate;
 		menustate = MENU_ST_SYSTEM2;
@@ -2960,7 +2966,7 @@ void HandleUI(void)
 		if (menu)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 4;
+			menusub = 5;
 			if(need_reset) tos_reset(1);
 		}
 		else if (select)
@@ -2986,6 +2992,23 @@ void HandleUI(void)
 				break;
 
 			case 3:
+				switch (tos_get_db9type())
+				{
+				case 0:
+					tos_set_db9type(2);
+					break;
+				case 5:
+					tos_set_db9type(1);
+					break;
+				default:
+					tos_set_db9type(tos_get_db9type() + 1);
+					break;
+				}
+				tos_send_fpga_db9type();
+				menustate = MENU_ST_SYSTEM1;
+				break;
+
+			case 4:
 				{
 					// RAM
 					int mem = (tos_system_ctrl() >> 1) & 7;   // current memory config
@@ -2997,11 +3020,11 @@ void HandleUI(void)
 				}
 				break;
 
-			case 4:  // TOS
+			case 5:  // TOS
 				SelectFile("IMG", SCANO_DIR, MENU_ST_SYSTEM_FILE_SELECTED, MENU_ST_SYSTEM1);
 				break;
 
-			case 5:
+			case 6:
 				{
 					unsigned long chipset = (tos_system_ctrl() >> 23) + 1;
 					if (chipset == 4) chipset = 0;
@@ -3010,7 +3033,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 6:
+			case 7:
 				if (!(tos_system_ctrl() & TOS_CONTROL_STE))
 				{
 					tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BLITTER);
@@ -3018,33 +3041,33 @@ void HandleUI(void)
 				}
 				break;
 
-			case 7:
+			case 8:
 				// viking/sm194
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_VIKING);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 8:
+			case 9:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_VIDEO_AR);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 9:
+			case 10:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_VIDEO_COLOR);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 10:
+			case 11:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_MDE60);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 11:
+			case 12:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BORDER);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 12:
+			case 13:
 				{
 					// next scanline state
 					int scan = ((tos_system_ctrl() >> 20) + 1) & 3;
@@ -3053,13 +3076,12 @@ void HandleUI(void)
 				}
 				break;
 
-			case 13:
+			case 14:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_STEREO);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-
-			case 14:
+			case 15:
 				menustate = MENU_ST_MAIN1;
 				menusub = 4;
 				if (need_reset) tos_reset(1);
@@ -3075,7 +3097,7 @@ void HandleUI(void)
 		break;
 
 	case MENU_ST_SYSTEM_FILE_SELECTED: // file successfully selected
-		if (menusub == 4)
+		if (menusub == 5)
 		{
 			tos_upload(SelectedPath);
 			menustate = MENU_ST_SYSTEM1;
@@ -3123,7 +3145,7 @@ void HandleUI(void)
 		if (menu)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 5;
+			menusub = 6;
 		}
 
 		if (select)
@@ -3137,7 +3159,7 @@ void HandleUI(void)
 			else
 			{
 				menustate = MENU_ST_MAIN1;
-				menusub = 5;
+				menusub = 6;
 			}
 		}
 		break;
@@ -3173,7 +3195,7 @@ void HandleUI(void)
 		if (menu)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 6;
+			menusub = 7;
 		}
 
 		if (select)
@@ -3186,7 +3208,7 @@ void HandleUI(void)
 			else
 			{
 				menustate = MENU_ST_MAIN1;
-				menusub = 6;
+				menusub = 7;
 			}
 		}
 		break;
@@ -3337,8 +3359,7 @@ void HandleUI(void)
 						minimig_config.db9type = minimig_config.db9type + 1 ;
 					}
 					minimig_ConfigDB9Type(minimig_config.db9type);
-					menustate = MENU_MAIN1;
-					
+					menustate = MENU_MAIN1;	
 				}
 				// Added DB9 menus END
 

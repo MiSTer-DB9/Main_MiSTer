@@ -25,6 +25,7 @@ typedef struct {
 	char acsi_img[2][1024];
 	char video_adjust[2];
 	char cdc_control_redirect;
+	tos_dbtype_t db9type; // Only used values 0-5
 } tos_config_t;
 
 static tos_config_t config;
@@ -62,6 +63,7 @@ static void set_control(uint32_t ctrl)
 
 	spi_uio_cmd_cont(UIO_SET_STATUS2);
 	spi32w(ctrl);
+	spi8(config.db9type);
 	DisableIO();
 }
 
@@ -567,6 +569,7 @@ void tos_config_load(int slot)
 
 	new_slot = (slot == -1) ? last_slot : slot;
 	memset(&config, 0, sizeof(config));
+	config.db9type = 1;
 
 	// set default values
 	config.system_ctrl = TOS_MEMCONFIG_1M | TOS_CONTROL_VIDEO_COLOR | TOS_CONTROL_BORDER;
@@ -577,7 +580,10 @@ void tos_config_load(int slot)
 	name[7] = '0' + new_slot;
 	int len = FileLoadConfig(name, 0, 0);
 	tos_debugf("Configuration file size: %d (should be %d)", len, sizeof(tos_config_t));
-	if (len == sizeof(tos_config_t)) FileLoadConfig(name, &config, sizeof(tos_config_t));
+
+	if (len == sizeof(tos_config_t) || len == (sizeof(tos_config_t) - sizeof(tos_dbtype_t))) {
+		FileLoadConfig(name, &config, len);
+	}
 
 	// ethernet is auto detected later
 	config.system_ctrl &= ~TOS_CONTROL_ETHERNET;
@@ -643,4 +649,16 @@ const char* tos_get_cfg_string(int num)
 	}
 
 	return "< empty slot >";
+}
+
+tos_dbtype_t tos_get_db9type() {
+	return config.db9type;
+}
+
+void tos_set_db9type(tos_dbtype_t db9type) {
+	config.db9type = db9type;
+}
+
+void tos_send_fpga_db9type() {
+	set_control(config.system_ctrl);
 }

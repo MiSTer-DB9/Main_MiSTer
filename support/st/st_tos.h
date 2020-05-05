@@ -95,4 +95,9 @@ int tos_config_exists(int slot);
 
 void tos_uart_mode(int enable);
 
+typedef unsigned char tos_dbtype_t;
+tos_dbtype_t tos_get_db9type();
+void tos_set_db9type(tos_dbtype_t db9type);
+void tos_send_fpga_db9type();
+
 #endif
