@@ -133,7 +133,7 @@ int archie_get_amix()
 void archie_set_db9mode(unsigned char i)
 {
 	config.system_ctrl = (config.system_ctrl & ~0b11100000000000000000000) | ((i & 7)<<20); // 20 zeroes here
-	user_io_8bit_set_status(config.system_ctrl << 20, 0b111000000000000000000000); // 21 zeroes here (status[21-23])
+	user_io_8bit_set_status(config.system_ctrl << 1, 0b111000000000000000000000); // 21 zeroes here (status[21-23])
 }
 
 unsigned char archie_get_db9mode()
