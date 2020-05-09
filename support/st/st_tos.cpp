@@ -652,6 +652,9 @@ const char* tos_get_cfg_string(int num)
 }
 
 tos_dbtype_t tos_get_db9type() {
+	if (config.db9type == 0) {
+		tos_set_db9type(1);
+	}
 	return config.db9type;
 }
 
