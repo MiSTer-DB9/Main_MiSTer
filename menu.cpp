@@ -1292,7 +1292,23 @@ void HandleUI(void)
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
-			case 9:  // Exit
+			case 9:
+				switch (archie_get_db9mode())
+				{
+				case 0:
+					archie_set_db9mode(2);
+					break;
+				case 5:
+					archie_set_db9mode(1);
+					break;
+				default:
+					archie_set_db9mode(archie_get_db9mode() + 1);
+					break;
+				}
+				menustate = MENU_ARCHIE_MAIN1;
+				break;
+
+			case 10:  // Exit
 				menustate = MENU_NONE1;
 				break;
 			}
