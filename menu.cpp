@@ -1264,71 +1264,80 @@ void HandleUI(void)
 	case MENU_ARCHIE_MAIN1:
 		OsdSetTitle(CoreName, OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
 
-		m = 0;
-		menumask = 0xfff;
+		while(1)
+		{
+			m = 0;
+			menumask = 0x1fff;
+			if (!menusub) firstmenu = 0;
+			adjvisible = 0;
 
-		strcpy(s, " Floppy 0: ");
-		strncat(s, get_image_name(0) ? get_image_name(0) : "* no disk *",27);
-		OsdWrite(m++, s, menusub == 0);
+			strcpy(s, " Floppy 0: ");
+			strncat(s, get_image_name(0) ? get_image_name(0) : "* no disk *",27);
+			MenuWrite(m++, s, menusub == 0, 0);
 
-		strcpy(s, " Floppy 1: ");
-		strncat(s, get_image_name(1) ? get_image_name(1) : "* no disk *", 27);
-		OsdWrite(m++, s, menusub == 1);
+			strcpy(s, " Floppy 1: ");
+			strncat(s, get_image_name(1) ? get_image_name(1) : "* no disk *", 27);
+			MenuWrite(m++, s, menusub == 1, 0);
 
-		OsdWrite(m++);
+			MenuWrite(m++);
 
-		strcpy(s, " HDD 0: ");
-		strncat(s, archie_get_hdd_name(0) ? archie_get_hdd_name(0) : "* no disk *", 27);
-		OsdWrite(m++, s, menusub == 2);
+			strcpy(s, " HDD 0: ");
+			strncat(s, archie_get_hdd_name(0) ? archie_get_hdd_name(0) : "* no disk *", 27);
+			MenuWrite(m++, s, menusub == 2);
 
-		strcpy(s, " HDD 1: ");
-		strncat(s, archie_get_hdd_name(1) ? archie_get_hdd_name(1) : "* no disk *", 27);
-		OsdWrite(m++, s, menusub == 3);
+			strcpy(s, " HDD 1: ");
+			strncat(s, archie_get_hdd_name(1) ? archie_get_hdd_name(1) : "* no disk *", 27);
+			MenuWrite(m++, s, menusub == 3);
 
-		OsdWrite(m++);
+			MenuWrite(m++);
 
-		strcpy(s, " OS ROM: ");
-		strcat(s, archie_get_rom_name());
-		OsdWrite(m++, s, menusub == 4);
+			strcpy(s, " OS ROM: ");
+			strcat(s, archie_get_rom_name());
+			MenuWrite(m++, s, menusub == 4);
 
-		OsdWrite(m++);
+			MenuWrite(m++);
 
-		strcpy(s, " Aspect ratio:       ");
-		strcat(s, archie_get_ar() ? "16:9" : "4:3");
-		OsdWrite(m++, s, menusub == 5);
+			strcpy(s, " Aspect ratio:       ");
+			strcat(s, archie_get_ar() ? "16:9" : "4:3");
+			MenuWrite(m++, s, menusub == 5);
 
-		strcpy(s, " Refresh rate:       ");
-		strcat(s, archie_get_60() ? "Variable" : "60Hz");
-		OsdWrite(m++, s, menusub == 6);
+			strcpy(s, " Refresh rate:       ");
+			strcat(s, archie_get_60() ? "Variable" : "60Hz");
+			MenuWrite(m++, s, menusub == 6);
 
-		sprintf(s, " Stereo mix:         %s", config_stereo_msg[archie_get_amix()]);
-		OsdWrite(m++, s, menusub == 7);
+			sprintf(s, " Stereo mix:         %s", config_stereo_msg[archie_get_amix()]);
+			MenuWrite(m++, s, menusub == 7);
 
-		strcpy(s, " 25MHz audio fix:    ");
-		strcat(s, archie_get_afix() ? "Enable" : "Disable");
-		OsdWrite(m++, s, menusub == 8);
+			strcpy(s, " 25MHz audio fix:    ");
+			strcat(s, archie_get_afix() ? "Enable" : "Disable");
+			MenuWrite(m++, s, menusub == 8);
 
-		OsdWrite(m++);
+			MenuWrite(m++);
 
-		sprintf(s, " Swap joysticks:     %s", user_io_get_joyswap() ? "Yes" : "No");
-		OsdWrite(m++, s, menusub == 9);
-		sprintf(s, " Swap mouse btn 2/3: %s", archie_get_mswap() ? "Yes" : "No");
-		OsdWrite(m++, s, menusub == 10);
-		sprintf(s, " UserIO Joys: ");
-		strcat(s, config_db9type_msg[archie_get_db9mode()]);
-		OsdWrite(m++, s, menusub == 11);
+			sprintf(s, " Swap joysticks:     %s", user_io_get_joyswap() ? "Yes" : "No");
+			MenuWrite(m++, s, menusub == 9);
+			sprintf(s, " Swap mouse btn 2/3: %s", archie_get_mswap() ? "Yes" : "No");
+			MenuWrite(m++, s, menusub == 10);
+			sprintf(s, " UserIO Joys: ");
+			strcat(s, config_db9type_msg[archie_get_db9mode()]);
+			MenuWrite(m++, s, menusub == 11);
 
-		while(m<15) OsdWrite(m++);
+			while (m < OsdGetSize() - 1) MenuWrite(m++);
+			MenuWrite(m++, STD_EXIT, menusub == 12, 0, OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
+			sysinfo_timer = 0;
 
-		OsdWrite(15, STD_EXIT, menusub == 11, 0);
-		menustate = MENU_ARCHIE_MAIN2;
-		parentstate = MENU_ARCHIE_MAIN1;
+			menustate = MENU_ARCHIE_MAIN2;
+			parentstate = MENU_ARCHIE_MAIN1;
 
-		// set helptext with core display on top of basic info
-		sprintf(helptext_custom, HELPTEXT_SPACER);
-		strcat(helptext_custom, OsdCoreNameGet());
-		strcat(helptext_custom, helptexts[HELPTEXT_MAIN]);
-		helptext = helptext_custom;
+			// set helptext with core display on top of basic info
+			sprintf(helptext_custom, HELPTEXT_SPACER);
+			strcat(helptext_custom, OsdCoreNameGet());
+			strcat(helptext_custom, helptexts[HELPTEXT_MAIN]);
+			helptext = helptext_custom;
+
+			if (!adjvisible) break;
+			firstmenu += adjvisible;
+		}
 		break;
 
 	case MENU_ARCHIE_MAIN2:
