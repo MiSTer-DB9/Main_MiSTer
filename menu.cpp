@@ -3990,7 +3990,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 13:
+			case 14:
 				{
 					// next scanline state
 					int scan = ((tos_system_ctrl() >> 20) + (minus ? -1 : 1)) & 3;
@@ -3999,12 +3999,12 @@ void HandleUI(void)
 				}
 				break;
 
-			case 14:
+			case 15:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_STEREO);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 15:
+			case 16:
 				menustate = MENU_ST_MAIN1;
 				menusub = 4;
 				if (need_reset)
