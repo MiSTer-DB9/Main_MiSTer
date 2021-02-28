@@ -212,6 +212,7 @@ const char *config_scaler_msg[] = { "Internal","Custom" };
 const char *config_afilter_msg[] = { "Internal","Custom" };
 const char *config_gamma_msg[] = { "Off","On" };
 const char *config_db9type_msg[] = { "--",  "Off", "DB9MD 1 Player", "DB9MD 2 Players", "DB15 1 Player", "DB15 2 Players" }; // Added for DB9 menus
+const char *config_scale[] = { "Normal", "V-Integer", "HV-Integer-", "HV-Integer+" };
 
 #define DPAD_NAMES 4
 #define DPAD_BUTTON_NAMES 12  //DPAD_NAMES + 6 buttons + start/select
@@ -419,7 +420,7 @@ void substrcpy(char *d, char *s, char idx)
 #define STD_SPACE_EXIT "        SPACE to exit"
 #define STD_COMBO_EXIT "      Ctrl+ESC to exit"
 
-static unsigned char getIdx(char *opt)
+int getOptIdx(char *opt)
 {
 	if ((opt[1] >= '0') && (opt[1] <= '9')) return opt[1] - '0';
 	if ((opt[1] >= 'A') && (opt[1] <= 'V')) return opt[1] - 'A' + 10;
@@ -428,8 +429,8 @@ static unsigned char getIdx(char *opt)
 
 uint32_t getStatus(char *opt, uint32_t status)
 {
-	char idx1 = getIdx(opt);
-	char idx2 = getIdx(opt + 1);
+	char idx1 = getOptIdx(opt);
+	char idx2 = getOptIdx(opt + 1);
 	uint32_t x = (status & (1 << idx1)) ? 1 : 0;
 
 	if (idx2>idx1) {
@@ -442,8 +443,8 @@ uint32_t getStatus(char *opt, uint32_t status)
 
 uint32_t setStatus(char *opt, uint32_t status, uint32_t value)
 {
-	unsigned char idx1 = getIdx(opt);
-	unsigned char idx2 = getIdx(opt + 1);
+	unsigned char idx1 = getOptIdx(opt);
+	unsigned char idx2 = getOptIdx(opt + 1);
 	uint32_t x = 1;
 
 	if (idx2>idx1) x = ~(0xffffffff << (idx2 - idx1 + 1));
@@ -454,8 +455,8 @@ uint32_t setStatus(char *opt, uint32_t status, uint32_t value)
 
 uint32_t getStatusMask(char *opt)
 {
-	char idx1 = getIdx(opt);
-	char idx2 = getIdx(opt + 1);
+	char idx1 = getOptIdx(opt);
+	char idx2 = getOptIdx(opt + 1);
 	uint32_t x = 1;
 
 	if (idx2 > idx1) x = ~(0xffffffff << (idx2 - idx1 + 1));
@@ -1358,7 +1359,7 @@ void HandleUI(void)
 		OsdSetTitle(CoreName, OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
 
 		m = 0;
-		menumask = 0xfff;
+		menumask = 0x1fff;
 
 		strcpy(s, " Floppy 0: ");
 		strncat(s, get_image_name(0) ? get_image_name(0) : "* no disk *",27);
@@ -1390,30 +1391,34 @@ void HandleUI(void)
 		archie_set_ar(get_ar_name(archie_get_ar(), s));
 		OsdWrite(m++, s, menusub == 5);
 
-		strcpy(s, " Refresh Rate:    ");
-		strcat(s, archie_get_60() ? "Variable" : "60Hz");
+		strcpy(s, " Scale:           ");
+		strcat(s, config_scale[archie_get_scale()]);
 		OsdWrite(m++, s, menusub == 6);
 
-		sprintf(s, " Stereo Mix:      %s", config_stereo_msg[archie_get_amix()]);
+		strcpy(s, " Refresh Rate:    ");
+		strcat(s, archie_get_60() ? "Variable" : "60Hz");
 		OsdWrite(m++, s, menusub == 7);
+
+		sprintf(s, " Stereo Mix:      %s", config_stereo_msg[archie_get_amix()]);
+		OsdWrite(m++, s, menusub == 8);
 
 		strcpy(s, " 25MHz Audio Fix: ");
 		strcat(s, archie_get_afix() ? "Enable" : "Disable");
-		OsdWrite(m++, s, menusub == 8);
-
-		OsdWrite(m++);
+		OsdWrite(m++, s, menusub == 9);
 
 		sprintf(s, " Swap Joysticks:  %s", user_io_get_joyswap() ? "Yes" : "No");
-		OsdWrite(m++, s, menusub == 9);
-		sprintf(s, " Swap Btn 2/3:    %s", archie_get_mswap() ? "Yes" : "No");
 		OsdWrite(m++, s, menusub == 10);
+
+		sprintf(s, " Swap Btn 2/3:    %s", archie_get_mswap() ? "Yes" : "No");
+		OsdWrite(m++, s, menusub == 11);
+
 		sprintf(s, " UserIO Joys: ");
 		strcat(s, config_db9type_msg[archie_get_db9mode()]);
-		OsdWrite(m++, s, menusub == 11);
+		OsdWrite(m++, s, menusub == 12);
 
 		while(m<15) OsdWrite(m++);
 
-		OsdWrite(15, STD_EXIT, menusub == 12, 0);
+		OsdWrite(15, STD_EXIT, menusub == 13, 0);
 		menustate = MENU_ARCHIE_MAIN2;
 		parentstate = MENU_ARCHIE_MAIN1;
 
@@ -1471,31 +1476,36 @@ void HandleUI(void)
 				break;
 
 			case 6:
-				archie_set_60(!archie_get_60());
+				archie_set_scale(archie_get_scale() + (minus ? -1 : 1));
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 7:
-				archie_set_amix(archie_get_amix() + (minus ? -1 : 1));
+				archie_set_60(!archie_get_60());
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 8:
-				archie_set_afix(!archie_get_afix());
+				archie_set_amix(archie_get_amix() + (minus ? -1 : 1));
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 9:
-				user_io_set_joyswap(!user_io_get_joyswap());
+				archie_set_afix(!archie_get_afix());
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 10:
-				archie_set_mswap(!archie_get_mswap());
+				user_io_set_joyswap(!user_io_get_joyswap());
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 11:
+				archie_set_mswap(!archie_get_mswap());
+				menustate = MENU_ARCHIE_MAIN1;
+				break;
+
+			case 12:
 				switch (archie_get_db9mode())
 				{
 				case 0:
@@ -1511,7 +1521,7 @@ void HandleUI(void)
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
-			case 12:  // Exit
+			case 13:  // Exit
 				if (select) menustate = MENU_NONE1;
 				break;
 			}
@@ -1608,7 +1618,7 @@ void HandleUI(void)
 						//Hide or Disable flag (small letter - opposite action)
 						while ((p[0] == 'H' || p[0] == 'D' || p[0] == 'h' || p[0] == 'd') && strlen(p) > 2)
 						{
-							int flg = (hdmask & (1 << getIdx(p))) ? 1 : 0;
+							int flg = (hdmask & (1 << getOptIdx(p))) ? 1 : 0;
 							if (p[0] == 'H') h |= flg;
 							if (p[0] == 'h') h |= (flg ^ 1);
 							if (p[0] == 'D') d |= flg;
@@ -1936,7 +1946,7 @@ void HandleUI(void)
 						//Hide or Disable flag
 						while ((p[0] == 'H' || p[0] == 'D' || p[0] == 'h' || p[0] == 'd') && strlen(p) > 2)
 						{
-							int flg = (hdmask & (1 << getIdx(p))) ? 1 : 0;
+							int flg = (hdmask & (1 << getOptIdx(p))) ? 1 : 0;
 							if (p[0] == 'H') h |= flg;
 							if (p[0] == 'h') h |= (flg ^ 1);
 							if (p[0] == 'D') d |= flg;
@@ -2110,7 +2120,7 @@ void HandleUI(void)
 							int ex = (p[0] == 't') || (p[0] == 'r');
 
 							// determine which status bit is affected
-							uint32_t mask = 1 << getIdx(p);
+							uint32_t mask = 1 << getOptIdx(p);
 							if (mask == 1 && is_x86())
 							{
 								x86_init();
@@ -3762,7 +3772,7 @@ void HandleUI(void)
 		strcat(s, config_db9type_msg[tos_get_db9type()]);
 		OsdWrite(m++, s, menusub == 3, 0);
 
-		strcpy(s, " Memory:    ");
+		strcpy(s, " Memory:     ");
 		strcat(s, tos_mem[(tos_system_ctrl() >> 1) & 7]);
 		OsdWrite(m++, s, menusub == 4);
 
@@ -3801,20 +3811,24 @@ void HandleUI(void)
 		OsdWrite(m++, s, menusub == 11);
 
 		strcpy(s, " Video Crop: ");
-		if (tos_system_ctrl() & TOS_CONTROL_BORDER) strcat(s, "Visible");
+		if (tos_system_ctrl() & TOS_CONTROL_BORDER) strcat(s, (tos_get_extctrl() & 0x400) ? "Visible 216p(5x)" : "Visible");
 		else                                        strcat(s, "Full");
 		OsdWrite(m++, s, menusub == 12);
 
-		strcpy(s, " Scanlines: ");
-		strcat(s, tos_scanlines[(tos_system_ctrl() >> 20) & 3]);
+		strcpy(s, " Scale:      ");
+		strcat(s, config_scale[(tos_get_extctrl() >> 11) & 3]);
 		OsdWrite(m++, s, menusub == 13);
+
+		strcpy(s, " Scanlines:  ");
+		strcat(s, tos_scanlines[(tos_system_ctrl() >> 20) & 3]);
+		OsdWrite(m++, s, menusub == 14);
 
 		strcpy(s, " YM-Audio:  ");
 		strcat(s, tos_stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
-		OsdWrite(m++, s, menusub == 14);
+		OsdWrite(m++, s, menusub == 15);
 
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 15);
+		OsdWrite(16, STD_EXIT, menusub == 16);
 
 		parentstate = menustate;
 		menustate = MENU_ST_SYSTEM2;
@@ -3951,8 +3965,29 @@ void HandleUI(void)
 				break;
 
 			case 12:
-				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BORDER);
-				menustate = MENU_ST_SYSTEM1;
+				{
+					int mode = ((tos_system_ctrl() & TOS_CONTROL_BORDER) ? 1 : 0) | ((tos_get_extctrl() & 0x400) ? 2 : 0);
+					if (minus)
+					{
+						mode = (mode == 0) ? 3 : (mode == 3) ? 1 : 0;
+					}
+					else
+					{
+						mode = (mode == 0) ? 1 : (mode == 1) ? 3 : 0;
+					}
+
+					tos_update_sysctrl((mode & 1) ? (tos_system_ctrl() | TOS_CONTROL_BORDER) : (tos_system_ctrl() & ~TOS_CONTROL_BORDER));
+					tos_set_extctrl((mode & 2) ? (tos_get_extctrl() | 0x400) : (tos_get_extctrl() & ~0x400));
+					menustate = MENU_ST_SYSTEM1;
+				}
+				break;
+
+			case 13:
+				{
+					int mode = ((tos_get_extctrl() >> 11) + (minus ? -1 : 1)) & 3;
+					tos_set_extctrl((tos_get_extctrl() & ~0x1800) | (mode << 11));
+					menustate = MENU_ST_SYSTEM1;
+				}
 				break;
 
 			case 13:
@@ -5512,7 +5547,7 @@ void HandleUI(void)
 		/* video settings menu                                            */
 		/******************************************************************/
 	case MENU_MINIMIG_VIDEO1:
-		menumask = 0x7f;
+		menumask = 0x3ff;
 		parentstate = menustate;
 		helptext_idx = 0; // helptexts[HELPTEXT_VIDEO];
 
@@ -5533,15 +5568,24 @@ void HandleUI(void)
 		strcpy(s, " Aspect Ratio  : ");
 		minimig_config.scanlines = (get_ar_name((minimig_config.scanlines >> 4) & 3, s) << 4) | (minimig_config.scanlines & ~0x30);
 		OsdWrite(m++, s, menusub == 3, 0);
+		strcpy(s, " Pixel Clock   : ");
+		strcat(s, (minimig_get_extcfg() & 0x400) ? "Adaptive" : "28MHz");
+		OsdWrite(m++, s, menusub == 4, 0);
+		strcpy(s, " Scaling       : ");
+		strcat(s,config_scale[(minimig_get_extcfg() >> 11) & 3]);
+		OsdWrite(m++, s, menusub == 5, 0);
+		strcpy(s, " RTG Upscaling : ");
+		strcat(s, (minimig_get_extcfg() & 0x4000) ? "HV-Integer" : "Normal");
+		OsdWrite(m++, s, menusub == 6, 0);
+
 		OsdWrite(m++, "", 0, 0);
 		strcpy(s, " Stereo mix    : ");
 		strcat(s, config_stereo_msg[minimig_config.audio & 3]);
-		OsdWrite(m++, s, menusub == 4, 0);
+		OsdWrite(m++, s, menusub == 7, 0);
 		OsdWrite(m++, "", 0, 0);
-		OsdWrite(m++, "", 0, 0);
-		OsdWrite(m++, minimig_get_adjust() ? " Finish screen adjustment" : " Adjust screen position", menusub == 5, 0);
+		OsdWrite(m++, minimig_get_adjust() ? " Finish screen adjustment" : " Adjust screen position", menusub == 8, 0);
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 6, 0);
+		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 9, 0);
 
 		menustate = MENU_MINIMIG_VIDEO2;
 		break;
@@ -5585,15 +5629,28 @@ void HandleUI(void)
 			}
 			else if (menusub == 4)
 			{
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x400);
+			}
+			else if (menusub == 5)
+			{
+				int mode = ((minimig_get_extcfg() >> 11) + (minus ? -1 : 1)) & 3;
+				minimig_set_extcfg((minimig_get_extcfg() & ~0x1800) | (mode << 11));
+			}
+			else if (menusub == 6)
+			{
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x4000);
+			}
+			else if (menusub == 7)
+			{
 				minimig_config.audio = (minimig_config.audio + (minus ? -1 : 1)) & 3;
 				minimig_ConfigAudio(minimig_config.audio);
 			}
-			else if (menusub == 5 && select)
+			else if (menusub == 8 && select)
 			{
 				menustate = MENU_NONE1;
 				minimig_set_adjust(minimig_get_adjust() ? 0 : 1);
 			}
-			else if (menusub == 6)
+			else if (menusub == 9)
 			{
 				menustate = MENU_MINIMIG_MAIN1;
 				menusub = 9;

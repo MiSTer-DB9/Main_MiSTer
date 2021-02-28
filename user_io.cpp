@@ -420,6 +420,9 @@ static const char mlink_speed_labels[12][32] = { "110", "300", "600", "1200", "2
 
 static void parse_config()
 {
+	uint64_t mask = 0;
+	uint64_t overlap = 0;
+
 	int i = 0;
 	char *p;
 
@@ -546,6 +549,36 @@ static void parse_config()
 			while((p[0] == 'H' || p[0] == 'D' || p[0] == 'h' || p[0] == 'd') && strlen(p)>=2) p += 2;
 			if (p[0] == 'P') p += 2;
 
+			if (p[0] == 'R' || p[0] == 'T')
+			{
+				uint64_t x = 1 << getOptIdx(p);
+				overlap |= mask & x;
+				mask |= x;
+			}
+			if (p[0] == 'r' || p[0] == 't')
+			{
+				uint64_t x = 1 << getOptIdx(p);
+				x <<= 32;
+				overlap |= mask & x;
+				mask |= x;
+			}
+			if (p[0] == 'O')
+			{
+				char *opt = (p[1] == 'X') ? p + 1 : p;
+				uint64_t x = getStatusMask(opt);
+				x <<= getOptIdx(opt);
+				overlap |= mask & x;
+				mask |= x;
+			}
+			if (p[0] == 'o')
+			{
+				char *opt = (p[1] == 'X') ? p + 1 : p;
+				uint64_t x = getStatusMask(opt);
+				x <<= 32 + getOptIdx(opt);
+				overlap |= mask & x;
+				mask |= x;
+			}
+
 			if (p[0] == 'J')
 			{
 				int n = 1;
@@ -595,6 +628,32 @@ static void parse_config()
 		}
 		i++;
 	} while (p || i<3);
+
+	mask |= 1; // reset is always on bit 0
+	printf("\n// Status Bit Map:\n");
+	printf("//              Upper                          Lower\n");
+	printf("// 0         1         2         3          4         5         6   \n");
+	printf("// 01234567890123456789012345678901 23456789012345678901234567890123\n");
+	printf("// 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV\n");
+	char str[128];
+	strcpy(str, "// ");
+	for (int i = 0; i < 32; i++) strcat(str, (mask & (1ULL << i)) ? "X" : " ");
+	strcat(str, " ");
+	for (int i = 32; i < 64; i++) strcat(str, (mask & (1ULL << i)) ? "X" : " ");
+	strcat(str, "\n");
+	printf(str);
+
+	if (overlap)
+	{
+		strcpy(str, "// ");
+		for (int i = 0; i < 32; i++) strcat(str, (overlap & (1ULL << i)) ? "^" : " ");
+		strcat(str, " ");
+		for (int i = 32; i < 64; i++) strcat(str, (overlap & (1ULL << i)) ? "^" : " ");
+		strcat(str, "\n");
+		printf(str);
+		printf("// *Overlapped bits!* (can be intentional):\n");
+	}
+	printf("\n");
 
 	// legacy GBA versions
 	if (is_gba() && !ss_base)
@@ -789,10 +848,10 @@ uint32_t ValidateUARTbaud(int mode, uint32_t baud)
 int GetMidiLinkMode()
 {
 	struct stat filestat;
-	if (!stat("/tmp/ML_FSYNTH", &filestat)) return 0;
-	if (!stat("/tmp/ML_MUNT", &filestat)) return 1;
-	if (!stat("/tmp/ML_SERMIDI", &filestat)) return 2;
-	if (!stat("/tmp/ML_UDP", &filestat)) return 3;
+	if (!stat("/tmp/ML_FSYNTH", &filestat))  return 0;
+	if (!stat("/tmp/ML_MUNT", &filestat))    return 1;
+	if (!stat("/tmp/ML_USBMIDI", &filestat)) return 2;
+	if (!stat("/tmp/ML_UDP", &filestat))     return 3;
 	if (!stat("/tmp/ML_TCP", &filestat))     return 4;
 	if (!stat("/tmp/ML_UDP_ALT", &filestat)) return 5;
 	if (!stat("/tmp/ML_USBSER", &filestat))  return 6;
@@ -816,10 +875,10 @@ void SetMidiLinkMode(int mode)
 
 	switch (mode)
 	{
-	case 0: MakeFile("/tmp/ML_FSYNTH", ""); break;
-	case 1: MakeFile("/tmp/ML_MUNT", ""); break;
-		case 2: MakeFile("/tmp/ML_SERMIDI", ""); break;
-	case 3: MakeFile("/tmp/ML_UDP", ""); break;
+		case 0: MakeFile("/tmp/ML_FSYNTH", "");  break;
+		case 1: MakeFile("/tmp/ML_MUNT", "");    break;
+		case 2: MakeFile("/tmp/ML_USBMIDI", ""); break;
+		case 3: MakeFile("/tmp/ML_UDP", "");     break;
 		case 4: MakeFile("/tmp/ML_TCP", "");     break;
 		case 5: MakeFile("/tmp/ML_UDP_ALT", ""); break;
 		case 6: MakeFile("/tmp/ML_USBSER", "");  break;
@@ -1177,7 +1236,7 @@ void user_io_init(const char *path, const char *xml)
 		send_rtc(3);
 
 		// release reset
-		user_io_8bit_set_status(0, UIO_STATUS_RESET);
+		if(!is_minimig() && !is_st()) user_io_8bit_set_status(0, UIO_STATUS_RESET);
 		if(xml) arcade_check_error();
 		break;
 	}
