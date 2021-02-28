@@ -55,10 +55,33 @@ typedef struct
 	mm_hardfileTYPE hardfile[4];
 	unsigned char   cpu;
 	unsigned char   autofire;
-	char            info[64];
+	char            info[64];  
+} mm_configTYPE_nodb9;
+
+typedef struct
+{
+	char            id[8];
+	unsigned long   version;
+	char            kickstart[992];
+	char            label[32];
+	unsigned short  ext_cfg;
+	unsigned char   memory;
+	unsigned char   chipset;
+	mm_floppyTYPE   floppy;
+	unsigned char   disable_ar3;
+	unsigned char   enable_ide;
+	unsigned char   scanlines;
+	unsigned char   audio;
+	mm_hardfileTYPE hardfile[4];
+	unsigned char   cpu;
+	unsigned char   autofire;
+	char            info[72];  // It was 64
+	unsigned char   db9type; // Added DB9 menus	
 } mm_configTYPE;
 
+
 extern mm_configTYPE minimig_config;
+extern mm_configTYPE_nodb9 minimig_config_ndb9;
 
 int minimig_cfg_load(int num);
 int minimig_cfg_save(int num);
@@ -77,6 +100,7 @@ void minimig_ConfigCPU(unsigned char cpu);
 void minimig_ConfigChipset(unsigned char chipset);
 void minimig_ConfigFloppy(unsigned char drives, unsigned char speed);
 void minimig_ConfigAutofire(unsigned char autofire, unsigned char mask);
+void minimig_ConfigDB9Type(unsigned int db9type);
 
 void minimig_set_extcfg(unsigned short ext_cfg);
 unsigned short minimig_get_extcfg();

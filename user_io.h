@@ -21,6 +21,8 @@
 
 // 0x08 - 0x0F - core specific
 
+#define UIO_DB9_GET     0x0f
+
 #define UIO_JOYSTICK2   0x10  // also used by minimig and 8 bit
 #define UIO_JOYSTICK3   0x11  // -"-
 #define UIO_JOYSTICK4   0x12  // -"-
@@ -90,6 +92,7 @@
 #define UIO_MM2_FLP     0xF7 //0x44
 #define UIO_MM2_HDD     0xF8 //0x54
 #define UIO_MM2_JOY     0xF9 //0x64
+#define UIO_MM2_DB9TYPE 0xFA 
 
 #define JOY_RIGHT       0x01
 #define JOY_LEFT        0x02

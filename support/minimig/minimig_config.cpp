@@ -40,10 +40,11 @@ typedef struct
 	unsigned char   audio;
 	mm_hardfileTYPE hardfile[2];
 	unsigned char   cpu;
-	unsigned char   autofire;
+	unsigned char   autofire;	
 } configTYPE_old;
 
 mm_configTYPE minimig_config = { };
+mm_configTYPE_nodb9 minimig_config_nodb9 = { };
 static unsigned char romkey[3072];
 
 static void SendFileV2(fileTYPE* file, unsigned char* key, int keysize, int address, int size)
@@ -303,7 +304,7 @@ static void ApplyConfiguration(char reloadkickstart)
 	force_reload_kickstart = 0;
 
 	minimig_ConfigCPU(minimig_config.cpu);
-
+	
 	if (!reloadkickstart)
 	{
 		minimig_ConfigChipset(minimig_config.chipset);
@@ -379,6 +380,7 @@ static void ApplyConfiguration(char reloadkickstart)
 	minimig_ConfigAudio(minimig_config.audio);
 	minimig_ConfigAutofire(minimig_config.autofire, 0xC);
 	minimig_set_extcfg(minimig_config.ext_cfg & ~1);
+	minimig_ConfigDB9Type(minimig_config.db9type);
 }
 
 int minimig_cfg_load(int num)
@@ -395,7 +397,7 @@ int minimig_cfg_load(int num)
 	{
 		BootPrint("Opened configuration file\n");
 		printf("Configuration file size: %s, %d\n", filename, size);
-		if (size == sizeof(minimig_config) || size == 5152)
+		if (size == sizeof(minimig_config) || size == 5216 )    /// 
 		{
 			static mm_configTYPE tmpconf = {};
 			if (FileLoadConfig(filename, &tmpconf, sizeof(tmpconf)))
@@ -410,6 +412,29 @@ int minimig_cfg_load(int num)
 							updatekickstart = true;
 						}
 						memcpy((void*)&minimig_config, (void*)&tmpconf, sizeof(minimig_config));
+						result = 1; // We successfully loaded the config.
+					}
+					else BootPrint("Config file sanity check failed!\n");
+				}
+				else BootPrint("Wrong configuration file format!\n");
+			}
+			else printf("Cannot load configuration file\n");
+		} else if (size == sizeof(minimig_config_nodb9) || size == 5152)
+		{
+			static mm_configTYPE_nodb9 tmpconf = {};
+			if (FileLoadConfig(filename, &tmpconf, sizeof(tmpconf)))
+			{
+				// check file id and version
+				if (strncmp(tmpconf.id, config_id, sizeof(minimig_config.id)) == 0) {
+					// A few more sanity checks...
+					if (tmpconf.floppy.drives <= 4) {
+						// If either the old config and new config have a different kickstart file,
+						// or this is the first boot, we need to upload a kickstart image.
+						if (strcmp(tmpconf.kickstart, minimig_config.kickstart) != 0) {
+							updatekickstart = true;
+						}
+						memcpy((void*)&minimig_config, (void*)&tmpconf, sizeof(minimig_config));
+						minimig_config.db9type = 1;
 						result = 1; // We successfully loaded the config.
 					}
 					else BootPrint("Config file sanity check failed!\n");
@@ -436,6 +461,7 @@ int minimig_cfg_load(int num)
 						memcpy((void*)&minimig_config, (void*)&tmpconf, sizeof(minimig_config));
 						minimig_config.cpu = tmpconf.cpu;
 						minimig_config.autofire = tmpconf.autofire;
+						minimig_config.db9type = 1;
 						memset(&minimig_config.hardfile[2], 0, sizeof(minimig_config.hardfile[2]));
 						memset(&minimig_config.hardfile[3], 0, sizeof(minimig_config.hardfile[3]));
 						result = 1; // We successfully loaded the config.
@@ -445,7 +471,7 @@ int minimig_cfg_load(int num)
 				else BootPrint("Wrong configuration file format!\n");
 			}
 			else printf("Cannot load configuration file\n");
-		}
+		} 		
 		else printf("Wrong configuration file size: %d (expected: %u)\n", size, sizeof(minimig_config));
 	}
 	if (!result) {
@@ -465,6 +491,7 @@ int minimig_cfg_load(int num)
 		minimig_config.hardfile[0].filename[0] = 0;
 		minimig_config.hardfile[1].enabled = 1;
 		minimig_config.hardfile[1].filename[0] = 0;
+		minimig_config.db9type = 1;
 		updatekickstart = true;
 		BootPrintEx(">>> No config found. Using defaults. <<<");
 	}
@@ -704,6 +731,11 @@ void minimig_ConfigAutofire(unsigned char autofire, unsigned char mask)
 	uint16_t param = mask;
 	param = (param << 8) | autofire;
 	spi_uio_cmd16(UIO_MM2_JOY, param);
+}
+
+void minimig_ConfigDB9Type(unsigned int db9type)
+{
+	spi_uio_cmd8(UIO_MM2_DB9TYPE, db9type);
 }
 
 void minimig_set_extcfg(unsigned short ext_cfg)
