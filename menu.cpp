@@ -211,9 +211,10 @@ const char *config_midilink_mode[] = {"Local", "Local", "  USB", "  UDP", "-----
 const char *config_scaler_msg[] = { "Internal","Custom" };
 const char *config_afilter_msg[] = { "Internal","Custom" };
 const char *config_gamma_msg[] = { "Off","On" };
+const char *config_scale[] = { "Normal", "V-Integer", "HV-Integer-", "HV-Integer+", "HV-Integer", "???", "???", "???" };
 const char *config_db9type_msg[] = { "--",  "Off", "DB9MD 1 Player", "DB9MD 2 Players", "DB15 1 Player", "DB15 2 Players" }; // Added for DB9 menus
-const char *config_scale[] = { "Normal", "V-Integer", "HV-Integer-", "HV-Integer+" };
 
+const char *config_scale[] = { "Normal", "V-Integer", "HV-Integer-", "HV-Integer+" };
 #define DPAD_NAMES 4
 #define DPAD_BUTTON_NAMES 12  //DPAD_NAMES + 6 buttons + start/select
 
@@ -4272,7 +4273,7 @@ void HandleUI(void)
 		}
 		else if (select || plus || minus)
 		{
-			uint16_t mt32_cfg = is_minimig() ? minimig_get_extcfg() : tos_get_extctrl();
+			uint32_t mt32_cfg = is_minimig() ? minimig_get_extcfg() : tos_get_extctrl();
 
 			switch (menusub)
 			{
@@ -5547,14 +5548,13 @@ void HandleUI(void)
 		/* video settings menu                                            */
 		/******************************************************************/
 	case MENU_MINIMIG_VIDEO1:
-		menumask = 0x3ff;
+		menumask = 0x1fff;
 		parentstate = menustate;
 		helptext_idx = 0; // helptexts[HELPTEXT_VIDEO];
 
 		m = 0;
-		OsdSetTitle("Video", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
+		OsdSetTitle("Audio & Video", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
 
-		OsdWrite(m++);
 		strcpy(s, " TV Standard   : ");
 		strcat(s, minimig_config.chipset & CONFIG_NTSC ? "NTSC" : "PAL");
 		OsdWrite(m++, s, menusub == 0, 0);
@@ -5572,20 +5572,30 @@ void HandleUI(void)
 		strcat(s, (minimig_get_extcfg() & 0x400) ? "Adaptive" : "28MHz");
 		OsdWrite(m++, s, menusub == 4, 0);
 		strcpy(s, " Scaling       : ");
-		strcat(s,config_scale[(minimig_get_extcfg() >> 11) & 3]);
+		strcat(s,config_scale[(minimig_get_extcfg() >> 11) & 7]);
 		OsdWrite(m++, s, menusub == 5, 0);
 		strcpy(s, " RTG Upscaling : ");
 		strcat(s, (minimig_get_extcfg() & 0x4000) ? "HV-Integer" : "Normal");
 		OsdWrite(m++, s, menusub == 6, 0);
 
-		OsdWrite(m++, "", 0, 0);
+		OsdWrite(m++);
 		strcpy(s, " Stereo mix    : ");
 		strcat(s, config_stereo_msg[minimig_config.audio & 3]);
 		OsdWrite(m++, s, menusub == 7, 0);
-		OsdWrite(m++, "", 0, 0);
-		OsdWrite(m++, minimig_get_adjust() ? " Finish screen adjustment" : " Adjust screen position", menusub == 8, 0);
+		strcpy(s, " Audio Filter  : ");
+		strcat(s, (~minimig_get_extcfg() & 0x10000) ? "Auto(LED)" : (minimig_get_extcfg() & 0x8000) ? "On" : "Off");
+		OsdWrite(m++, s, menusub == 8, 0);
+		strcpy(s, " Model         : ");
+		strcat(s, (minimig_get_extcfg() & 0x20000) ? "A1200" : "A500");
+		OsdWrite(m++, s, menusub == 9, 0);
+		strcpy(s, " Paula Output  : ");
+		strcat(s, (minimig_get_extcfg() & 0x40000) ? "PWM" : "Normal");
+		OsdWrite(m++, s, menusub == 10, 0);
+
+		OsdWrite(m++);
+		OsdWrite(m++, minimig_get_adjust() ? " Finish screen adjustment" : " Adjust screen position", menusub == 11, 0);
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 9, 0);
+		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 12, 0);
 
 		menustate = MENU_MINIMIG_VIDEO2;
 		break;
@@ -5595,69 +5605,99 @@ void HandleUI(void)
 		if (select || minus || plus)
 		{
 			menustate = MENU_MINIMIG_VIDEO1;
-			if (menusub == 0)
+			switch(menusub)
 			{
+			case 0:
 				minimig_config.chipset ^= CONFIG_NTSC;
 				minimig_ConfigChipset(minimig_config.chipset);
-			}
-			else if (menusub == 1)
-			{
-				int scanlines = minimig_config.scanlines & 7;
-				if (minus)
+				break;
+
+			case 1:
 				{
-					scanlines--;
-					if (scanlines < 0) scanlines = 4;
+					int scanlines = minimig_config.scanlines & 7;
+					if (minus)
+					{
+						scanlines--;
+						if (scanlines < 0) scanlines = 4;
+					}
+					else
+					{
+						scanlines++;
+						if (scanlines > 4) scanlines = 0;
+					}
+					minimig_config.scanlines = scanlines | (minimig_config.scanlines & 0xf8);
+					minimig_ConfigVideo(minimig_config.scanlines);
 				}
-				else
-				{
-					scanlines++;
-					if (scanlines > 4) scanlines = 0;
-				}
-				minimig_config.scanlines = scanlines | (minimig_config.scanlines & 0xf8);
-				minimig_ConfigVideo(minimig_config.scanlines);
-			}
-			else if (menusub == 2)
-			{
+				break;
+
+			case 2:
 				minimig_config.scanlines &= ~0x80;
 				minimig_config.scanlines ^= 0x40;
 				minimig_ConfigVideo(minimig_config.scanlines);
-			}
-			else if (menusub == 3)
-			{
+				break;
+
+			case 3:
 				minimig_config.scanlines = (next_ar((minimig_config.scanlines >> 4) & 3, minus) << 4) | (minimig_config.scanlines & ~0x30);
 				minimig_ConfigVideo(minimig_config.scanlines);
-			}
-			else if (menusub == 4)
-			{
+				break;
+
+			case 4:
 				minimig_set_extcfg(minimig_get_extcfg() ^ 0x400);
-			}
-			else if (menusub == 5)
-			{
-				int mode = ((minimig_get_extcfg() >> 11) + (minus ? -1 : 1)) & 3;
-				minimig_set_extcfg((minimig_get_extcfg() & ~0x1800) | (mode << 11));
-			}
-			else if (menusub == 6)
-			{
+				break;
+
+			case 5:
+				{
+					int mode = (minimig_get_extcfg() >> 11) & 7;
+					if (minus) mode = (mode <= 0) ? 4 : (mode - 1);
+					else mode = (mode >= 4) ? 0 : (mode + 1);
+					minimig_set_extcfg((minimig_get_extcfg() & ~0x3800) | (mode << 11));
+				}
+				break;
+
+			case 6:
 				minimig_set_extcfg(minimig_get_extcfg() ^ 0x4000);
-			}
-			else if (menusub == 7)
-			{
+				break;
+
+			case 7:
 				minimig_config.audio = (minimig_config.audio + (minus ? -1 : 1)) & 3;
 				minimig_ConfigAudio(minimig_config.audio);
-			}
-			else if (menusub == 8 && select)
-			{
-				menustate = MENU_NONE1;
-				minimig_set_adjust(minimig_get_adjust() ? 0 : 1);
-			}
-			else if (menusub == 9)
-			{
-				menustate = MENU_MINIMIG_MAIN1;
+				break;
+
+			case 8:
+				{
+					int mode = (minimig_get_extcfg() >> 15) & 3;
+					if (minus) mode = (mode == 2) ? 0 : (mode - 1);
+					else mode = (mode == 0) ? 2 : (mode + 1);
+					minimig_set_extcfg((minimig_get_extcfg() & ~0x18000) | ((mode & 3) << 15));
+				}
+				break;
+
+			case 9:
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x20000);
+				break;
+
+			case 10:
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x40000);
+				break;
+
+			case 11:
+				if (select)
+				{
+					menustate = MENU_NONE1;
+					minimig_set_adjust(minimig_get_adjust() ? 0 : 1);
+				}
+				break;
+
+			case 12:
+				if (select)
+				{
+					menustate = MENU_MINIMIG_MAIN1;
 				menusub = 9;
+				}
+				break;
 			}
 		}
-
-		if (menu)
+		else if (menu)
 		{
 			menustate = MENU_NONE1;
 		}

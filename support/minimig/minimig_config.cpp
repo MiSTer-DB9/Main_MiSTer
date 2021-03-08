@@ -379,7 +379,7 @@ static void ApplyConfiguration(char reloadkickstart)
 	minimig_ConfigVideo(minimig_config.scanlines);
 	minimig_ConfigAudio(minimig_config.audio);
 	minimig_ConfigAutofire(minimig_config.autofire, 0xC);
-	minimig_set_extcfg(minimig_config.ext_cfg & ~1);
+	minimig_set_extcfg(minimig_get_extcfg() & ~1);
 	minimig_ConfigDB9Type(minimig_config.db9type);
 }
 
@@ -580,7 +580,7 @@ static const char* get_shared_vadjust_path()
 	return path;
 }
 
-static void adjust_vsize(char force)
+void minimig_adjust_vsize(char force)
 {
 	static uint16_t nres = 0;
 	spi_uio_cmd_cont(UIO_GET_VMODE);
@@ -688,7 +688,7 @@ void minimig_set_adjust(char n)
 {
 	if (minimig_adjust && !n) store_vsize();
 	minimig_adjust = (n == 1) ? 1 : 0;
-	if (n == 2) adjust_vsize(1);
+	if (n == 2) minimig_adjust_vsize(1);
 }
 
 char minimig_get_adjust()
@@ -738,9 +738,10 @@ void minimig_ConfigDB9Type(unsigned int db9type)
 	spi_uio_cmd8(UIO_MM2_DB9TYPE, db9type);
 }
 
-void minimig_set_extcfg(unsigned short ext_cfg)
+void minimig_set_extcfg(unsigned int ext_cfg)
 {
-	minimig_config.ext_cfg = ext_cfg;
+	minimig_config.ext_cfg = (unsigned short)ext_cfg;
+	minimig_config.ext_cfg2 = (unsigned short)(ext_cfg >> 16);
 
 	spi_uio_cmd_cont(UIO_SET_STATUS2);
 	spi32_w(0);
@@ -748,7 +749,7 @@ void minimig_set_extcfg(unsigned short ext_cfg)
 	DisableIO();
 }
 
-unsigned short minimig_get_extcfg()
+unsigned int minimig_get_extcfg()
 {
-	return minimig_config.ext_cfg;
+	return (minimig_config.ext_cfg2 << 16) | minimig_config.ext_cfg;
 }
