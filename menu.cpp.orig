@@ -118,8 +118,11 @@ enum MENU
 
 	MENU_UART1,
 	MENU_UART2,
+	MENU_UART3,
+	MENU_UART4,
 	MENU_BAUD1,
 	MENU_BAUD2,
+
 	MENU_SFONT_FILE_SELECTED,
 
 	MENU_COEFF_FILE_SELECTED,
@@ -131,6 +134,7 @@ enum MENU
 	MENU_GENERIC_MAIN2,
 	MENU_GENERIC_FILE_SELECTED,
 	MENU_GENERIC_IMAGE_SELECTED,
+	MENU_GENERIC_SAVE_WAIT,
 
 	// Arcade
 	MENU_ARCADE_DIP1,
@@ -174,6 +178,10 @@ enum MENU
 	MENU_ARCHIE_MAIN1,
 	MENU_ARCHIE_MAIN2,
 	MENU_ARCHIE_MAIN_FILE_SELECTED,
+
+	// MT32-pi
+	MENU_MT32PI_MAIN1,
+	MENU_MT32PI_MAIN2,
 };
 
 static uint32_t menustate = MENU_NONE1;
@@ -182,6 +190,7 @@ static uint32_t menusub = 0;
 static uint32_t menusub_last = 0; //for when we allocate it dynamically and need to know last row
 static uint64_t menumask = 0; // Used to determine which rows are selectable...
 static uint32_t menu_timer = 0;
+static uint32_t menu_save_timer = 0;
 
 extern const char *version;
 
@@ -194,16 +203,20 @@ const char *config_autofire_msg[] = { "        AUTOFIRE OFF", "        AUTOFIRE 
 const char *config_cd32pad_msg[] = { "OFF", "ON" };
 const char *config_button_turbo_msg[] = { "OFF", "FAST", "MEDIUM", "SLOW" };
 const char *config_button_turbo_choice_msg[] = { "A only", "B only", "A & B" };
-const char *joy_button_map[] = { "RIGHT", "LEFT", "DOWN", "UP", "BUTTON A", "BUTTON B", "BUTTON X", "BUTTON Y", "BUTTON L", "BUTTON R", "SELECT", "START", "KBD TOGGLE", "MENU", "     Stick X: Tilt RIGHT", "     Stick Y: Tilt DOWN", "   Mouse emu X: Tilt RIGHT", "   Mouse emu Y: Tilt DOWN" };
+const char *joy_button_map[] = { "RIGHT", "LEFT", "DOWN", "UP", "BUTTON A", "BUTTON B", "BUTTON X", "BUTTON Y", "BUTTON L", "BUTTON R", "SELECT", "START", "KBD TOGGLE", "MENU", "    Analog X: Tilt RIGHT", "    Analog Y: Tilt DOWN", "   Mouse emu X: Tilt RIGHT", "   Mouse emu Y: Tilt DOWN" };
 const char *joy_ana_map[] = { "    DPAD test: Press RIGHT", "    DPAD test: Press DOWN", "   Stick 1 Test: Tilt RIGHT", "   Stick 1 Test: Tilt DOWN", "   Stick 2 Test: Tilt RIGHT", "   Stick 2 Test: Tilt DOWN" };
 const char *config_stereo_msg[] = { "0%", "25%", "50%", "100%" };
-const char *config_uart_msg[] = { "     None", "      PPP", "  Console", "     MIDI", " Midilink" };
-const char *config_midilink_msg[] = { " MIDI Local", "MIDI Remote", "   MFP UART", "" };
-const char *config_uart_baud[] = { "110", "300", "600", "1200", "2400", "9600", "14400", "19200", "31250/MIDI", "38400", "57600", "115200"};
+const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem"};
+const char *config_midilink_mode[] = {"Local", "Local", "  USB", "  UDP", "-----", "-----", "  USB" };
 const char *config_scaler_msg[] = { "Internal","Custom" };
 const char *config_afilter_msg[] = { "Internal","Custom" };
 const char *config_gamma_msg[] = { "Off","On" };
+<<<<<<< HEAD
 const char *config_db9type_msg[] = { "--",  "Off", "DB9MD 1 Player", "DB9MD 2 Players", "DB15 1 Player", "DB15 2 Players" }; // Added for DB9 menus
+const char *config_scale[] = { "Normal", "V-Integer", "HV-Integer-", "HV-Integer+" };
+=======
+const char *config_scale[] = { "Normal", "V-Integer", "HV-Integer-", "HV-Integer+", "HV-Integer", "???", "???", "???" };
+>>>>>>> upstream/master
 
 #define DPAD_NAMES 4
 #define DPAD_BUTTON_NAMES 12  //DPAD_NAMES + 6 buttons + start/select
@@ -411,7 +424,7 @@ void substrcpy(char *d, char *s, char idx)
 #define STD_SPACE_EXIT "        SPACE to exit"
 #define STD_COMBO_EXIT "      Ctrl+ESC to exit"
 
-static unsigned char getIdx(char *opt)
+int getOptIdx(char *opt)
 {
 	if ((opt[1] >= '0') && (opt[1] <= '9')) return opt[1] - '0';
 	if ((opt[1] >= 'A') && (opt[1] <= 'V')) return opt[1] - 'A' + 10;
@@ -420,8 +433,8 @@ static unsigned char getIdx(char *opt)
 
 uint32_t getStatus(char *opt, uint32_t status)
 {
-	char idx1 = getIdx(opt);
-	char idx2 = getIdx(opt + 1);
+	char idx1 = getOptIdx(opt);
+	char idx2 = getOptIdx(opt + 1);
 	uint32_t x = (status & (1 << idx1)) ? 1 : 0;
 
 	if (idx2>idx1) {
@@ -434,8 +447,8 @@ uint32_t getStatus(char *opt, uint32_t status)
 
 uint32_t setStatus(char *opt, uint32_t status, uint32_t value)
 {
-	unsigned char idx1 = getIdx(opt);
-	unsigned char idx2 = getIdx(opt + 1);
+	unsigned char idx1 = getOptIdx(opt);
+	unsigned char idx2 = getOptIdx(opt + 1);
 	uint32_t x = 1;
 
 	if (idx2>idx1) x = ~(0xffffffff << (idx2 - idx1 + 1));
@@ -446,8 +459,8 @@ uint32_t setStatus(char *opt, uint32_t status, uint32_t value)
 
 uint32_t getStatusMask(char *opt)
 {
-	char idx1 = getIdx(opt);
-	char idx2 = getIdx(opt + 1);
+	char idx1 = getOptIdx(opt);
+	char idx2 = getOptIdx(opt + 1);
 	uint32_t x = 1;
 
 	if (idx2 > idx1) x = ~(0xffffffff << (idx2 - idx1 + 1));
@@ -961,11 +974,12 @@ static int next_ar(int ar, int minus)
 
 static int joymap_first = 0;
 
-static int wm_x = 0;
-static int wm_y = 0;
-static int wm_ok = 0;
-static int wm_side = 0;
-static uint16_t wm_pos[4] = {};
+static int gun_x = 0;
+static int gun_y = 0;
+static int gun_ok = 0;
+static int gun_side = 0;
+static int gun_idx = 0;
+static uint16_t gun_pos[4] = {};
 static int page = 0;
 
 void HandleUI(void)
@@ -1150,6 +1164,7 @@ void HandleUI(void)
 			break;
 		case KEY_ENTER:
 		case KEY_SPACE:
+		case KEY_KPENTER:
 			select = true;
 			break;
 		case KEY_UP:
@@ -1348,7 +1363,7 @@ void HandleUI(void)
 		OsdSetTitle(CoreName, OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
 
 		m = 0;
-		menumask = 0xfff;
+		menumask = 0x1fff;
 
 		strcpy(s, " Floppy 0: ");
 		strncat(s, get_image_name(0) ? get_image_name(0) : "* no disk *",27);
@@ -1380,30 +1395,34 @@ void HandleUI(void)
 		archie_set_ar(get_ar_name(archie_get_ar(), s));
 		OsdWrite(m++, s, menusub == 5);
 
-		strcpy(s, " Refresh Rate:    ");
-		strcat(s, archie_get_60() ? "Variable" : "60Hz");
+		strcpy(s, " Scale:           ");
+		strcat(s, config_scale[archie_get_scale()]);
 		OsdWrite(m++, s, menusub == 6);
 
-		sprintf(s, " Stereo Mix:      %s", config_stereo_msg[archie_get_amix()]);
+		strcpy(s, " Refresh Rate:    ");
+		strcat(s, archie_get_60() ? "Variable" : "60Hz");
 		OsdWrite(m++, s, menusub == 7);
+
+		sprintf(s, " Stereo Mix:      %s", config_stereo_msg[archie_get_amix()]);
+		OsdWrite(m++, s, menusub == 8);
 
 		strcpy(s, " 25MHz Audio Fix: ");
 		strcat(s, archie_get_afix() ? "Enable" : "Disable");
-		OsdWrite(m++, s, menusub == 8);
-
-		OsdWrite(m++);
+		OsdWrite(m++, s, menusub == 9);
 
 		sprintf(s, " Swap Joysticks:  %s", user_io_get_joyswap() ? "Yes" : "No");
-		OsdWrite(m++, s, menusub == 9);
-		sprintf(s, " Swap Btn 2/3:    %s", archie_get_mswap() ? "Yes" : "No");
 		OsdWrite(m++, s, menusub == 10);
+
+		sprintf(s, " Swap Btn 2/3:    %s", archie_get_mswap() ? "Yes" : "No");
+		OsdWrite(m++, s, menusub == 11);
+
 		sprintf(s, " UserIO Joys: ");
 		strcat(s, config_db9type_msg[archie_get_db9mode()]);
-		OsdWrite(m++, s, menusub == 11);
+		OsdWrite(m++, s, menusub == 12);
 
 		while(m<15) OsdWrite(m++);
 
-		OsdWrite(15, STD_EXIT, menusub == 12, 0);
+		OsdWrite(15, STD_EXIT, menusub == 13, 0);
 		menustate = MENU_ARCHIE_MAIN2;
 		parentstate = MENU_ARCHIE_MAIN1;
 
@@ -1461,31 +1480,36 @@ void HandleUI(void)
 				break;
 
 			case 6:
-				archie_set_60(!archie_get_60());
+				archie_set_scale(archie_get_scale() + (minus ? -1 : 1));
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 7:
-				archie_set_amix(archie_get_amix() + (minus ? -1 : 1));
+				archie_set_60(!archie_get_60());
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 8:
-				archie_set_afix(!archie_get_afix());
+				archie_set_amix(archie_get_amix() + (minus ? -1 : 1));
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 9:
-				user_io_set_joyswap(!user_io_get_joyswap());
+				archie_set_afix(!archie_get_afix());
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 10:
-				archie_set_mswap(!archie_get_mswap());
+				user_io_set_joyswap(!user_io_get_joyswap());
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
 			case 11:
+				archie_set_mswap(!archie_get_mswap());
+				menustate = MENU_ARCHIE_MAIN1;
+				break;
+
+			case 12:
 				switch (archie_get_db9mode())
 				{
 				case 0:
@@ -1501,7 +1525,7 @@ void HandleUI(void)
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
-			case 12:  // Exit
+			case 13:  // Exit
 				if (select) menustate = MENU_NONE1;
 				break;
 			}
@@ -1546,9 +1570,7 @@ void HandleUI(void)
 		/******************************************************************/
 
 	case MENU_GENERIC_MAIN1: {
-		spi_uio_cmd_cont(UIO_GET_OSDMASK);
-		hdmask = spi_w(0);
-		DisableIO();
+		hdmask = spi_uio_cmd16(UIO_GET_OSDMASK, 0);
 		user_io_read_confstr();
 		uint32_t s_entry = 0;
 		int entry = 0;
@@ -1600,7 +1622,7 @@ void HandleUI(void)
 						//Hide or Disable flag (small letter - opposite action)
 						while ((p[0] == 'H' || p[0] == 'D' || p[0] == 'h' || p[0] == 'd') && strlen(p) > 2)
 						{
-							int flg = (hdmask & (1 << getIdx(p))) ? 1 : 0;
+							int flg = (hdmask & (1 << getOptIdx(p))) ? 1 : 0;
 							if (p[0] == 'H') h |= flg;
 							if (p[0] == 'h') h |= (flg ^ 1);
 							if (p[0] == 'D') d |= flg;
@@ -1854,11 +1876,26 @@ void HandleUI(void)
 
 	} break;
 
+	case MENU_GENERIC_SAVE_WAIT:
+		menumask = 0;
+		parentstate = menustate;
+		if (menu_save_timer && CheckTimer(menu_save_timer))
+		{
+			menu_save_timer = 0;
+			menustate = MENU_GENERIC_MAIN1;
+		}
+		break;
+
 	case MENU_GENERIC_MAIN2:
 		saved_menustate = MENU_GENERIC_MAIN1;
 
-		// menu key closes menu
-		if (menu)
+		if (menu_save_timer && !CheckTimer(menu_save_timer))
+		{
+			for (int i = 0; i < 16; i++) OsdWrite(m++);
+			OsdWrite(8, "          Saving...");
+			menustate = MENU_GENERIC_SAVE_WAIT;
+		}
+		else if (menu)
 		{
 			menustate = MENU_NONE1;
 		}
@@ -1892,12 +1929,11 @@ void HandleUI(void)
 			else
 			{
 				static char ext[256];
-				p = user_io_get_confstr(1);
-
 				int h = 0, d = 0, inpage = !page;
 				uint32_t entry = 0;
-				int i = 1;
+				int i = 2;
 
+				p = 0;
 				addon[0] = 0;
 
 				while (1)
@@ -1914,7 +1950,7 @@ void HandleUI(void)
 						//Hide or Disable flag
 						while ((p[0] == 'H' || p[0] == 'D' || p[0] == 'h' || p[0] == 'd') && strlen(p) > 2)
 						{
-							int flg = (hdmask & (1 << getIdx(p))) ? 1 : 0;
+							int flg = (hdmask & (1 << getOptIdx(p))) ? 1 : 0;
 							if (p[0] == 'H') h |= flg;
 							if (p[0] == 'h') h |= (flg ^ 1);
 							if (p[0] == 'D') d |= flg;
@@ -1953,7 +1989,7 @@ void HandleUI(void)
 					if (p[0] == 'F' || p[0] == 'S') addon[0] = 0;
 				}
 
-				if (!d)
+				if (p && !d)
 				{
 					if (p[0] == 'F' && (select || recent))
 					{
@@ -1995,26 +2031,25 @@ void HandleUI(void)
 						memcpy(Selected_tmp, Selected_S[(int)ioctl_index], sizeof(Selected_tmp));
 						if (is_x86()) strcpy(Selected_tmp, x86_get_image_path(ioctl_index));
 
-						if (is_pce() || is_megacd())
+						if (is_pce() || is_megacd() || is_x86())
 						{
+							//if (!strncasecmp(fs_pFileExt, "CUE", 3))
+							//{
+								//look for CHD too
+								strcat(fs_pFileExt, "CHD");
+								strcat(ext, "CHD");
+							//}
 							int num = ScanDirectory(Selected_tmp, SCANF_INIT, fs_pFileExt, 0);
 							memcpy(Selected_tmp, Selected_S[(int)ioctl_index], sizeof(Selected_tmp));
 
 							if (num == 1)
 							{
-<<<<<<< HEAD
 							fs_Options |= SCANO_NOENTER;
 							char *p = strrchr(Selected_tmp, '/');
 							if (p) *p = 0;
 						}
-=======
-								fs_Options |= SCANO_NOENTER;
-								char *p = strrchr(Selected_tmp, '/');
-								if (p) *p = 0;
-							}
 
 							fs_Options |= SCANO_NOZIP;
->>>>>>> Upstream/master
 						}
 
 						if (select) SelectFile(Selected_tmp, ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
@@ -2089,7 +2124,7 @@ void HandleUI(void)
 							int ex = (p[0] == 't') || (p[0] == 'r');
 
 							// determine which status bit is affected
-							uint32_t mask = 1 << getIdx(p);
+							uint32_t mask = 1 << getOptIdx(p);
 							if (mask == 1 && is_x86())
 							{
 								x86_init();
@@ -2148,6 +2183,11 @@ void HandleUI(void)
 				menusub = 3;
 			}
 		}
+		else if(spi_uio_cmd16(UIO_GET_OSDMASK, 0) != hdmask)
+		{
+			menustate = MENU_GENERIC_MAIN1;
+		}
+
 		break;
 
 	case MENU_GENERIC_FILE_SELECTED:
@@ -2250,7 +2290,7 @@ void HandleUI(void)
 					menumask |= 0x10;
 					MenuWrite(n++);
 					int mode = GetUARTMode();
-					const char *p = config_uart_msg[(is_st() && mode == 3) ? 4 : mode];
+					const char *p = config_uart_msg[mode];
 					while (*p == ' ') p++;
 					sprintf(s, " UART mode (%s)            ",p);
 					s[27] = '\x16';
@@ -2409,12 +2449,7 @@ void HandleUI(void)
 			case 4:
 				{
 					menustate = MENU_UART1;
-
-					struct stat filestat;
-					int mode = GetUARTMode();
-
-					//jump straght to Softsynth selection if enabled
-					menusub = ((mode != 3 && mode != 4) || !stat("/dev/midi", &filestat)) ? 0 : 2;
+					menusub = 0;
 				}
 				break;
 
@@ -2491,6 +2526,7 @@ void HandleUI(void)
 					printf("Saving config to %s\n", filename);
 					FileSaveConfig(filename, status, 8);
 					if (is_x86()) x86_config_save();
+					if (is_arcade()) arcade_nvm_save();
 				}
 				break;
 
@@ -2667,44 +2703,64 @@ void HandleUI(void)
 	case MENU_UART1:
 		{
 			helptext_idx = 0;
-			menumask = 0xFF;
+			menumask = 0x181;
 
-			OsdSetTitle("UART mode");
+			OsdSetTitle("UART Mode");
 			menustate = MENU_UART2;
 			parentstate = MENU_UART1;
 
-			struct stat filestat;
-			int hasmidi = !stat("/dev/midi1", &filestat);
 			int mode = GetUARTMode();
 			int midilink = GetMidiLinkMode();
-			int m = (mode != 3 && mode != 4) || hasmidi;
 
-			OsdWrite(0);
-			sprintf(s, " Connection:       %s", config_uart_msg[(is_st() && mode ==3) ? 4 : mode]);
-			OsdWrite(1, s, menusub == 0, 0);
-			OsdWrite(2);
+			m = 0;
+			OsdWrite(m++);
+			sprintf(s, " Connection:      %s", config_uart_msg[mode]);
+			OsdWrite(m++, s, menusub == 0, 0);
 
-			if (is_st())
+			OsdWrite(m++);
+			if (mode == 4)
 			{
-				sprintf(s, " MidiLink:       %s", config_midilink_msg[(midilink>>1) & 3]);
+				sprintf(s, " Link:            %s", (midilink == 6) ? "USB Serial" : (midilink == 5) ? "       UDP" : "       TCP");
+				OsdWrite(m++, s, menusub == 1);
+				menumask |= 2;
 			}
-			else
+
+			if (mode == 3)
 			{
-			sprintf(s, " MidiLink:            %s", (midilink & 2) ? "Remote" : " Local");
+				sprintf(s, " MidiLink:             %s", config_midilink_mode[midilink]);
+				OsdWrite(m++, s, menusub == 2);
+
+				if (midilink < 2)
+				{
+					sprintf(s, " Type:                %s", midilink ? "  MUNT" : "FSYNTH");
+					OsdWrite(m++, s, menusub == 3);
+
+			OsdWrite(m++);
+					OsdWrite(m++, " Change Soundfont          \x16", menusub == 4, midilink);
+					menumask |= 0x18;
+				}
+			OsdWrite(m++);
+
+				menumask |= 0x4;
 			}
-			OsdWrite(3, s, menusub == 1, m);
-			sprintf(s, " Type:            %s", (midilink & 6) ? ((midilink & 1) ? "       UDP" : "       TCP") : ((midilink & 1) ? "      MUNT" : "FluidSynth"));
-			OsdWrite(4, s, menusub == 2, m);
 
-			OsdWrite(5);
-			OsdWrite(6, " Change Soundfont          \x16", menusub == 3, mode==3&&midilink==0?0:1);
-			OsdWrite(7, " Change UART BAUD          \x16", menusub == 4, mode==3?0:1);
-			OsdWrite(8, " Reset UART connection", menusub == 5, mode?0:1);
-			OsdWrite(9);
-			OsdWrite(10, " Save", menusub == 6);
+			if (mode)
+			{
+			strcpy(s, " Baud                      \x16");
+			sprintf(s + 6, "(%s)", GetUARTbaud_label(GetUARTMode()));
+			s[strlen(s)] = ' ';
+				OsdWrite(m++, s, menusub == 5, !mode);
 
-			for (int i = 11; i < 15; i++) OsdWrite(i);
-			OsdWrite(15, STD_EXIT, menusub == 7);
+			OsdWrite(m++);
+				OsdWrite(m++, " Reset UART connection", menusub == 6, mode ? 0 : 1);
+
+				menumask |= 0x60;
+			}
+
+			OsdWrite(m++, " Save", menusub == 7);
+
+			for (; m < 15; m++) OsdWrite(m);
+			OsdWrite(15, STD_EXIT, menusub == 8);
 		}
 		break;
 
@@ -2721,82 +2777,110 @@ void HandleUI(void)
 			switch (menusub)
 			{
 			case 0:
+				menusub = GetUARTMode();
+				menustate = MENU_UART3;
+				break;
+
+			case 1:
 				{
-					uint mode = (GetUARTMode() + (minus ? -1 : 1)) & 3;
+					int mode = GetUARTMode();
+					int midilink = GetMidiLinkMode();
+					SetUARTMode(0);
+					if (minus)
+					{
+						if (midilink <= 4) midilink = 6;
+						else midilink--;
+					}
+					else
+					{
+						if (midilink >= 6) midilink = 4;
+						else midilink++;
+					}
+					SetMidiLinkMode(midilink);
 					SetUARTMode(mode);
 					menustate = MENU_UART1;
 				}
 				break;
 
-			case 1:
 			case 2:
-				if (!m)
 				{
 					int mode = GetUARTMode();
-					if (!is_st() || menusub == 2)
-					{
-					SetMidiLinkMode(GetMidiLinkMode() ^ ((menusub == 1) ? 2 : 1));
-					}
-					else
-					{
-						int type = GetMidiLinkMode();
+					int midilink = GetMidiLinkMode();
+					SetUARTMode(0);
+
 						if (minus)
 						{
-							type -= 2;
-							if (type < 0) type = (type & 1) | 4;
+						if (midilink < 2 || midilink > 3) midilink = 3;
+						else if (midilink == 3)
+						{
+							struct stat filestat;
+							midilink = (!stat("/dev/midi1", &filestat) || !stat("/dev/ttyUSB0", &filestat)) ? 2 : 0;
+						}
+						else midilink = 0;
 						}
 						else
 						{
-							type += 2;
-							if (type >= 6) type &= 1;
+						if (midilink < 2)
+						{
+							struct stat filestat;
+							midilink = (!stat("/dev/midi1", &filestat) || !stat("/dev/ttyUSB0", &filestat)) ? 2 : 3;
 						}
-						SetMidiLinkMode(type);
+						else if (midilink == 2) midilink = 3;
+						else midilink = 0;
 					}
-					SetUARTMode(0);
+
+					SetMidiLinkMode(midilink);
 					SetUARTMode(mode);
 					menustate = MENU_UART1;
 				}
 				break;
+
 			case 3:
-				if(select)
 				{
-					if(GetUARTMode() == 3 && GetMidiLinkMode() == 0)
+					int mode = GetUARTMode();
+					int midilink = GetMidiLinkMode();
+					SetUARTMode(0);
+					SetMidiLinkMode(midilink ? 0 : 1);
+					SetUARTMode(mode);
+					menustate = MENU_UART1;
+				}
+				break;
+
+			case 4:
+				if(select && GetMidiLinkMode() == 0)
 					{
-						sprintf(Selected_tmp, "linux/soundfonts");
+					sprintf(Selected_tmp, GetMidiLinkSoundfont());
 						SelectFile(Selected_tmp, "SF2", SCANO_DIR | SCANO_TXT, MENU_SFONT_FILE_SELECTED, MENU_UART1);
 					}
-				}
 				break;
-			case 4:
-				if (select)
-				{
-					if(GetUARTMode() == 3)
-					{
-						menusub = 0;
-						menustate = MENU_BAUD1;
-					}
-				}
-				break;
+
 			case 5:
 				if (select)
 				{
+						menustate = MENU_BAUD1;
+						menusub = GetUARTbaud_idx(GetUARTMode());
+					}
+				break;
+
+			case 6:
+				if (select)
+				{
 					ResetUART();
-<<<<<<< HEAD
-						menustate = MENU_8BIT_SYSTEM1;
+					menustate = MENU_COMMON1;
 						menusub = 4;
 					}
-=======
-					menustate = MENU_COMMON1;
-					menusub = 4;
-				}
->>>>>>> Upstream/master
 				break;
-			case 6:
+
+			case 7:
 				if (select)
 				{
 					int mode = GetUARTMode() | (GetMidiLinkMode() << 8);
 					sprintf(s, "uartmode.%s", user_io_get_core_name_ex());
 					FileSaveConfig(s, &mode, 4);
+					uint64_t speeds = GetUARTbaud(3);
+					speeds = (speeds << 32) | GetUARTbaud(1);
+					sprintf(s, "uartspeed.%s", user_io_get_core_name_ex());
+					FileSaveConfig(s, &speeds, 8);
 					menustate = MENU_COMMON1;
 					menusub = 4;
 				}
@@ -2809,36 +2893,110 @@ void HandleUI(void)
 		}
 		break;
 
+	case MENU_UART3:
+        {
+            helptext_idx = 0;
+            menumask = 0x00;
+            OsdSetTitle("UART MODE");
+            menustate = MENU_UART4;
+            parentstate = MENU_UART3;
+
+            uint32_t max = (sizeof(config_uart_msg) / sizeof(config_uart_msg[0]));
+			m = 0;
+
+            for (uint32_t i = 0; i < 15; i++)
+            {
+				if((i >= (14-max)/2) && (m < max))
+                {
+                    menumask |= 1 << m;
+                    const char * uart_msg = config_uart_msg[m];
+                    while (*uart_msg == ' ') {uart_msg++;}//skip spaces
+                    sprintf(s, "         %s", uart_msg);
+                    OsdWrite(i, s, menusub == m, 0);
+					m++;
+                }
+				else
+				{
+					OsdWrite(i);
+				}
+            }
+            menumask |= 0x10000;
+            OsdWrite(15, STD_EXIT, menusub == 16);
+        }
+        break;
+
+    case MENU_UART4:
+        {
+			if (menu)
+			{
+				menustate = MENU_UART1;
+				menusub = 0;
+			}
+			else if (select)
+			{
+				if (menusub != 16)
+				{
+					uint32_t max = (sizeof(config_uart_msg) / sizeof(config_uart_msg[0]));
+					if (menusub < max)
+					{
+						int midilink = GetMidiLinkMode();
+						if (menusub == 4) midilink = (midilink == 2) ? 6 : 4;
+						if (menusub == 3) midilink = (midilink == 6) ? 2 : (midilink > 3) ? 0 : midilink;
+						SetMidiLinkMode(midilink);
+						SetUARTMode(menusub);
+					}
+				}
+				menustate = MENU_UART1;
+				menusub = 0;
+			}
+		}
+		break;
+
 	case MENU_SFONT_FILE_SELECTED:
 		{
 			printf("MENU_SFONT_FILE_SELECTED --> '%s'\n", selPath);
 			sprintf(Selected_tmp, "/sbin/mlinkutil FSSFONT /media/fat/\"%s\"", selPath);
 			system(Selected_tmp);
 			AdjustDirectory(selPath);
-			//keep file select OSD
-			menustate = MENU_FILE_SELECT1; //MENU_UART1;
+			// MENU_FILE_SELECT1 to file select OSD
+			menustate = MENU_UART1; //MENU_FILE_SELECT1;
 		}
 		break;
 
 	case MENU_BAUD1:
 		{
 			helptext_idx = 0;
-			menumask = 0x1FFF;
-			OsdSetTitle("UART BAUD");
+			OsdSetTitle("UART Baud Rate");
 			menustate = MENU_BAUD2;
 			parentstate = MENU_BAUD1;
-			unsigned int max = sizeof(config_uart_baud) / 4 -1;
-			for (unsigned int i = 0; i < 15; i++)
-			{
-				if (i <= max)
+
+			m = 0;
+			menumask = 0;
+			int mode = GetUARTMode();
+			const uint32_t *bauds = GetUARTbauds(mode);
+			for (uint32_t i = 0; i < 12; i++)
 				{
-					sprintf(s, " %s", config_uart_baud[i]);
-					OsdWrite(i, s, menusub == i, 0);
+				if (!bauds[i]) break;
+				menumask |= 1 << i;
+				m = i;
 				}
-				else
-					OsdWrite(i);
+
+			uint32_t start = (16 - m)/2;
+			uint32_t k = 0;
+			while (k < start) OsdWrite(k++);
+
+			for (uint32_t i = 0; i < 12; i++)
+			{
+				if (!bauds[i]) break;
+
+				sprintf(s, " %s", GetUARTbaud_label(mode, i));
+				OsdWrite(k++, s, menusub == i, 0);
 			}
-			OsdWrite(15, STD_EXIT, menusub == max + 1);
+
+			while (k < 15) OsdWrite(k++);
+			m++;
+			menumask |= 1 << m;
+			OsdWrite(15, STD_EXIT, menusub == m);
 		}
 		break;
 
@@ -2847,23 +3005,32 @@ void HandleUI(void)
 			if (menu)
 			{
 				menustate = MENU_UART1;
-				menusub = 4;
+				menusub = 5;
 				break;
 			}
-
-			if (select)
+			else if (select)
 			{
-				unsigned int max = sizeof(config_uart_baud) / 4 - 1;
-				if(menusub <= max)
+				const uint32_t *bauds = GetUARTbauds(GetUARTMode());
+				for (uint32_t i = 0; i < 12; i++)
 				{
-					char baudStr[20];
-					strcpy(baudStr, config_uart_baud[menusub]);
-					char * tmp = strchr(baudStr, '/');
-					if(tmp) *tmp = 0x00; //Remove "/MIDI"
-					sprintf(s, "/sbin/mlinkutil BAUD %s", baudStr);
+					if (!bauds[i]) break;
+					if (menusub == i)
+			{
+						ValidateUARTbaud(GetUARTMode(), bauds[i]);
+						if (GetUARTMode() >= 3)
+				{
+							sprintf(s, "/sbin/mlinkutil BAUD %d", GetUARTbaud(GetUARTMode()));
 					system(s);
 				}
-				menusub = 4;
+						else
+						{
+							int mode = GetUARTMode();
+							SetUARTMode(0);
+							SetUARTMode(mode);
+						}
+					}
+				}
+				menusub = 5;
 				menustate = MENU_UART1;
 			}
 		}
@@ -3393,15 +3560,12 @@ void HandleUI(void)
 
 	case MENU_ABOUT2:
 		StarsUpdate();
-		OsdDrawLogo(0);
-		OsdDrawLogo(1);
-		OsdDrawLogo(2);
-		OsdDrawLogo(3);
-		OsdDrawLogo(4);
-
-		OsdWrite(10, "      www.MiSTerFPGA.org");
+		m = 0;
+		while (m < 10) OsdDrawLogo(m++);
+		OsdWrite(m++, "     www.MiSTerFPGA.org", 0, 0, 1);
+		OsdWrite(m++, "", 0, 0, 1);
 		sprintf(s, "       MiSTer v%s", version + 5);
-		OsdWrite(12, s, 0, 0, 1);
+		OsdWrite(m++, s, 0, 0, 1);
 
 		s[0] = 0;
 		{
@@ -3414,9 +3578,9 @@ void HandleUI(void)
 			for (int i = 0; i < len; i++) *s2++ = *s3++;
 			*s2++ = 0;
 		}
-		OsdWrite(13, s, 0, 0, 1);
-		OsdWrite(14, "", 0, 0, 1);
-		ScrollText(15, "                                 MiSTer by Sorgelig, based on MiST by Till Harbaum, Minimig by Dennis van Weeren and other projects. MiSTer hardware and software is distributed under the terms of the GNU General Public License version 3. MiSTer FPGA cores are the work of their respective authors under individual licensing. Go to www.MiSTerFPGA.org for more details.", 0, 0, 0, 0);
+		OsdWrite(m++, s, 0, 0, 1);
+		OsdWrite(m++, "", 0, 0, 1);
+		ScrollText(m++, "                                 MiSTer by Alexey Melnikov, based on MiST by Till Harbaum, Minimig by Dennis van Weeren and other projects. MiSTer hardware and software is distributed under the terms of the GNU General Public License version 3. MiSTer FPGA cores are the work of their respective authors under individual licensing. Go to www.MiSTerFPGA.org for more details.", 0, 0, 0, 0);
 
 		if (menu | select | left)
 		{
@@ -3432,7 +3596,7 @@ void HandleUI(void)
 
 	case MENU_ST_MAIN1:
 		OsdSetSize(16);
-		menumask = 0x3ff;
+		menumask = 0x77f;
 		OsdSetTitle("AtariST", 0);
 		m = 0;
 
@@ -3456,11 +3620,18 @@ void HandleUI(void)
 		OsdWrite(m++, " Save config               \x16", menusub == 6);
 		OsdWrite(m++);
 
-		OsdWrite(m++, " Reset", menusub == 7);
-		OsdWrite(m++, " Cold Boot", menusub == 8);
+		if (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 1)
+		{
+			menumask |= 0x80;
+			OsdWrite(m++, " MT32-pi                   \x16", menusub == 7);
+			OsdWrite(m++);
+		}
+
+		OsdWrite(m++, " Reset", menusub == 8);
+		OsdWrite(m++, " Cold Boot", menusub == 9);
 
 		for (; m < OsdGetSize()-1; m++) OsdWrite(m);
-		MenuWrite(15, STD_EXIT, menusub == 9, 0, OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
+		MenuWrite(15, STD_EXIT, menusub == 10, 0, OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
 
 		menustate = MENU_ST_MAIN2;
 		parentstate = MENU_ST_MAIN1;
@@ -3543,7 +3714,15 @@ void HandleUI(void)
 				}
 				break;
 
-			case 7:  // Reset
+			case 7:
+				if (select)
+				{
+					menustate = MENU_MT32PI_MAIN1;
+					menusub = 0;
+				}
+				break;
+
+			case 8:  // Reset
 				if (select)
 				{
 					tos_reset(0);
@@ -3551,7 +3730,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 8:  // Cold Boot
+			case 9:  // Cold Boot
 				if (select)
 				{
 					tos_insert_disk(0, "");
@@ -3561,7 +3740,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 9:  // Exit
+			case 10:  // Exit
 				if (select)
 				{
 					menustate = MENU_NONE1;
@@ -3597,7 +3776,7 @@ void HandleUI(void)
 		strcat(s, config_db9type_msg[tos_get_db9type()]);
 		OsdWrite(m++, s, menusub == 3, 0);
 
-		strcpy(s, " Memory:    ");
+		strcpy(s, " Memory:     ");
 		strcat(s, tos_mem[(tos_system_ctrl() >> 1) & 7]);
 		OsdWrite(m++, s, menusub == 4);
 
@@ -3635,21 +3814,25 @@ void HandleUI(void)
 		else                                       strcat(s, "Off");
 		OsdWrite(m++, s, menusub == 11);
 
-		strcpy(s, " Border:    ");
-		if (tos_system_ctrl() & TOS_CONTROL_BORDER) strcat(s, "Visible");
+		strcpy(s, " Video Crop: ");
+		if (tos_system_ctrl() & TOS_CONTROL_BORDER) strcat(s, (tos_get_extctrl() & 0x400) ? "Visible 216p(5x)" : "Visible");
 		else                                        strcat(s, "Full");
 		OsdWrite(m++, s, menusub == 12);
 
-		strcpy(s, " Scanlines: ");
-		strcat(s, tos_scanlines[(tos_system_ctrl() >> 20) & 3]);
+		strcpy(s, " Scale:      ");
+		strcat(s, config_scale[(tos_get_extctrl() >> 11) & 3]);
 		OsdWrite(m++, s, menusub == 13);
+
+		strcpy(s, " Scanlines:  ");
+		strcat(s, tos_scanlines[(tos_system_ctrl() >> 20) & 3]);
+		OsdWrite(m++, s, menusub == 14);
 
 		strcpy(s, " YM-Audio:  ");
 		strcat(s, tos_stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
-		OsdWrite(m++, s, menusub == 14);
+		OsdWrite(m++, s, menusub == 15);
 
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 15);
+		OsdWrite(16, STD_EXIT, menusub == 16);
 
 		parentstate = menustate;
 		menustate = MENU_ST_SYSTEM2;
@@ -3786,11 +3969,32 @@ void HandleUI(void)
 				break;
 
 			case 12:
-				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BORDER);
-				menustate = MENU_ST_SYSTEM1;
+				{
+					int mode = ((tos_system_ctrl() & TOS_CONTROL_BORDER) ? 1 : 0) | ((tos_get_extctrl() & 0x400) ? 2 : 0);
+					if (minus)
+					{
+						mode = (mode == 0) ? 3 : (mode == 3) ? 1 : 0;
+					}
+					else
+					{
+						mode = (mode == 0) ? 1 : (mode == 1) ? 3 : 0;
+					}
+
+					tos_update_sysctrl((mode & 1) ? (tos_system_ctrl() | TOS_CONTROL_BORDER) : (tos_system_ctrl() & ~TOS_CONTROL_BORDER));
+					tos_set_extctrl((mode & 2) ? (tos_get_extctrl() | 0x400) : (tos_get_extctrl() & ~0x400));
+					menustate = MENU_ST_SYSTEM1;
+				}
 				break;
 
 			case 13:
+				{
+					int mode = ((tos_get_extctrl() >> 11) + (minus ? -1 : 1)) & 3;
+					tos_set_extctrl((tos_get_extctrl() & ~0x1800) | (mode << 11));
+					menustate = MENU_ST_SYSTEM1;
+				}
+				break;
+
+			case 14:
 				{
 					// next scanline state
 					int scan = ((tos_system_ctrl() >> 20) + (minus ? -1 : 1)) & 3;
@@ -3799,12 +4003,12 @@ void HandleUI(void)
 				}
 				break;
 
-			case 14:
+			case 15:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_STEREO);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 15:
+			case 16:
 				menustate = MENU_ST_MAIN1;
 				menusub = 4;
 				if (need_reset)
@@ -3945,11 +4149,207 @@ void HandleUI(void)
 		}
 		break;
 
+
+	case MENU_MT32PI_MAIN1:
+		{
+			parentstate = menustate;
+			OsdSetTitle("MT32-pi");
+			menumask = 0x7F;
+			uint32_t mt32_cfg = is_minimig() ? minimig_get_extcfg() : tos_get_extctrl();
+
+			m = 0;
+			OsdWrite(m++);
+			strcpy(s, " Use MT32-pi:            ");
+			strcat(s, (mt32_cfg & 0x2) ? " No" : "Yes");
+			OsdWrite(m++, s, menusub == 0);
+
+			strcpy(s, " Show Info: ");
+			switch ((mt32_cfg >> 8) & 3)
+			{
+			case 0:
+				strcat(s, "              No");
+				break;
+
+			case 1:
+				strcat(s, "             Yes");
+				break;
+
+			case 2:
+				strcat(s, "  LCD-On(non-FB)");
+				break;
+
+			case 3:
+				strcat(s, "LCD-Auto(non-FB)");
+				break;
+			}
+			OsdWrite(m++, s, menusub == 1);
+
+			OsdWrite(m++);
+			OsdWrite(m++, " Default Config:");
+
+			strcpy(s, " Synth:           ");
+			strcat(s, (mt32_cfg & 0x4) ? "FluidSynth" : "      Munt");
+			OsdWrite(m++, s, menusub == 2);
+
+			strcpy(s, " Munt ROM:          ");
+			switch ((mt32_cfg >> 3) & 3)
+			{
+			case 0:
+				strcat(s, "MT-32 v1");
+				break;
+
+			case 1:
+				strcat(s, "MT-32 v2");
+				break;
+
+			case 2:
+				strcat(s, "  CM-32L");
+				break;
+
+			case 3:
+				strcat(s, " Unknown");
+				break;
+			}
+			OsdWrite(m++, s, menusub == 3);
+
+			sprintf(s, " SoundFont:                %d", (mt32_cfg >> 5) & 7);
+			OsdWrite(m++, s, menusub == 4);
+
+			OsdWrite(m++);
+			strcpy(s, " Current Config: ");
+			hdmask = spi_uio_cmd16(UIO_GET_OSDMASK, 0);
+			if (((hdmask >> 1) & 3) == 1)
+			{
+				switch ((hdmask >> 3) & 3)
+				{
+				case 0:
+					strcat(s, "   MT-32 v1");
+					break;
+
+				case 1:
+					strcat(s, "   MT-32 v2");
+					break;
+
+				case 2:
+					strcat(s, "     CM-32L");
+					break;
+
+				default:
+					strcat(s, "    Unknown");
+					break;
+				}
+			}
+			else if (((hdmask >> 1) & 3) == 2)
+			{
+				sprintf(s + strlen(s), "SoundFont %d", (hdmask >> 3) & 7);
+			}
+			else
+			{
+				strcat(s, "    Unknown");
+			}
+			OsdWrite(m++, s);
+
+			OsdWrite(m++);
+			OsdWrite(m++, " Reset Hanging Notes", menusub == 5);
+
+			while (m < 15) OsdWrite(m++);
+			OsdWrite(15, STD_EXIT, menusub == 6, 0);
+
+			menustate = MENU_MT32PI_MAIN2;
+		}
+		break;
+
+
+	case MENU_MT32PI_MAIN2:
+		if (menu || back || left)
+		{
+			if (is_minimig())
+			{
+				menustate = MENU_MINIMIG_MAIN1;
+				menusub = 10;
+			}
+			else
+			{
+				menustate = MENU_ST_MAIN1;
+				menusub = 7;
+			}
+		}
+		else if (select || plus || minus)
+		{
+			uint32_t mt32_cfg = is_minimig() ? minimig_get_extcfg() : tos_get_extctrl();
+
+			switch (menusub)
+			{
+			case 0:
+				mt32_cfg ^= 0x2;
+				menustate = MENU_MT32PI_MAIN1;
+				break;
+
+			case 1:
+				m = (mt32_cfg >> 8) & 3;
+				m = (m + (minus ? -1 : 1)) & 3;
+				mt32_cfg = (mt32_cfg & ~0x300) | (m<<8);
+				menustate = MENU_MT32PI_MAIN1;
+				break;
+
+			case 2:
+				mt32_cfg ^= 0x4;
+				menustate = MENU_MT32PI_MAIN1;
+				break;
+
+			case 3:
+				m = (mt32_cfg >> 3) & 3;
+				if (minus)
+				{
+					m = (m - 1) & 3;
+					if (m == 3) m = 2;
+				}
+				else
+				{
+					m = (m + 1) & 3;
+					if (m == 3) m = 0;
+				}
+				mt32_cfg = (mt32_cfg & ~0x18) | (m << 3);
+				menustate = MENU_MT32PI_MAIN1;
+				break;
+
+			case 4:
+				m = (mt32_cfg >> 5) & 7;
+				m = (m + (minus ? -1 : 1)) & 7;
+				mt32_cfg = (mt32_cfg & ~0xE0) | (m << 5);
+				menustate = MENU_MT32PI_MAIN1;
+				break;
+
+			case 5:
+				if (select)
+				{
+					if (is_minimig()) minimig_set_extcfg(mt32_cfg | 1);
+					else tos_set_extctrl(mt32_cfg | 1);
+					mt32_cfg &= ~1;
+					menustate = MENU_MT32PI_MAIN1;
+				}
+				break;
+
+			case 6:
+				if (select) menustate = MENU_NONE1;
+				break;
+			}
+
+			if (is_minimig()) minimig_set_extcfg(mt32_cfg);
+			else tos_set_extctrl(mt32_cfg);
+		}
+		else if (spi_uio_cmd16(UIO_GET_OSDMASK, 0) != hdmask)
+		{
+			menustate = MENU_MT32PI_MAIN1;
+		}
+		break;
+
+
 		/******************************************************************/
 		/* minimig main menu                                              */
 		/******************************************************************/
 	case MENU_MINIMIG_MAIN1:
-		menumask = 0x1FF0;	// b01110000 Floppy turbo, Harddisk options & Exit.
+		menumask = 0x3DF0;	// b01110000 Floppy turbo, Harddisk options & Exit.
 		OsdSetTitle("Minimig", OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
 		helptext_idx = HELPTEXT_MAIN;
 
@@ -4006,29 +4406,33 @@ void HandleUI(void)
 		m = 3;
 		sprintf(s, " Floppy disk turbo : %s", minimig_config.floppy.speed ? "on" : "off");
 		OsdWrite(m++, s, menusub == 4, 0);
-		OsdWrite(m++);
-		
+
 		// Added DB9 menus INIT
 		if (minimig_config.db9type == 0) minimig_config.db9type =1;
 		sprintf(s, " UserIO Joys: ");
 		strcat(s, config_db9type_msg[minimig_config.db9type & 7]);
 		OsdWrite(m++, s, menusub == 5, 0);
 		// Added DB9 menus END
-		
-        OsdWrite(m++);
+
+		OsdWrite(m++);
 		OsdWrite(m++, " Hard disks                \x16", menusub == 6, 0);
 		OsdWrite(m++, " CPU & Chipset             \x16", menusub == 7, 0);
 		OsdWrite(m++, " Memory                    \x16", menusub == 8, 0);
 		OsdWrite(m++, " Audio & Video             \x16", menusub == 9, 0);
+		//if (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 1)
+		{
+			menumask |= 0x200;
+			OsdWrite(m++, " MT32-pi                   \x16", menusub == 10);
+		}
+
 		OsdWrite(m++);
+		OsdWrite(m++, " Save configuration        \x16", menusub == 11, 0);
+		OsdWrite(m++, " Load configuration        \x16", menusub == 12, 0);
 
-		OsdWrite(m++, " Save configuration        \x16", menusub == 10, 0);
-		OsdWrite(m++, " Load configuration        \x16", menusub == 11, 0);
+		while (m < 14) OsdWrite(m++);
+		OsdWrite(m++, " Reset", menusub == 13, 0);
 
-		//OsdWrite(m++);
-		OsdWrite(m++, " Reset", menusub == 12, 0);
-		//for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 13, 0);
+		OsdWrite(15, STD_EXIT, menusub == 14, 0);
 
 		menustate = MENU_MINIMIG_MAIN2;
 		parentstate = MENU_MINIMIG_MAIN1;
@@ -4082,7 +4486,7 @@ void HandleUI(void)
 				{
 					minimig_config.floppy.speed ^= 1;
 					minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
-					menustate = MENU_MAIN1;
+					menustate = MENU_MINIMIG_MAIN1;
 				}
 
 				// Added DB9 menus INIT
@@ -4096,7 +4500,7 @@ void HandleUI(void)
 						minimig_config.db9type = minimig_config.db9type + 1 ;
 					}
 					minimig_ConfigDB9Type(minimig_config.db9type);
-					menustate = MENU_MAIN1;	
+					menustate = MENU_MINIMIG_MAIN1;	
 				}
 				// Added DB9 menus END
 
@@ -4123,19 +4527,24 @@ void HandleUI(void)
 				else if (menusub == 10)
 				{
 					menusub = 0;
-					menustate = MENU_MINIMIG_SAVECONFIG1;
+					menustate = MENU_MT32PI_MAIN1;
 				}
 				else if (menusub == 11)
 				{
 					menusub = 0;
-					menustate = MENU_MINIMIG_LOADCONFIG1;
+					menustate = MENU_MINIMIG_SAVECONFIG1;
 				}
 				else if (menusub == 12)
+				{
+					menusub = 0;
+					menustate = MENU_MINIMIG_LOADCONFIG1;
+				}
+				else if (menusub == 13)
 				{
 					menustate = MENU_NONE1;
 					minimig_reset();
 				}
-				else if (menusub == 13)
+				else if (menusub == 14)
 				{
 					menustate = MENU_NONE1;
 				}
@@ -4846,13 +5255,8 @@ void HandleUI(void)
 			}
 			else if (menusub == 7)
 			{
-<<<<<<< HEAD
-				menustate = MENU_MAIN1;
-				menusub = 7;
-=======
 				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 6;
->>>>>>> Upstream/master
+				menusub = 7;
 			}
 		}
 
@@ -4862,13 +5266,8 @@ void HandleUI(void)
 		}
 		else if (back || left)
 		{
-<<<<<<< HEAD
-			menustate = MENU_MAIN1;
-			menusub = 7;
-=======
 			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 6;
->>>>>>> Upstream/master
+			menusub = 7;
 		}
 		break;
 
@@ -4953,13 +5352,8 @@ void HandleUI(void)
 			}
 			else if (menusub == 5 && select)
 			{
-<<<<<<< HEAD
-				menustate = MENU_MAIN1;
-				menusub = 8;
-=======
 				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 7;
->>>>>>> Upstream/master
+				menusub = 8;
 			}
 		}
 
@@ -4969,13 +5363,8 @@ void HandleUI(void)
 		}
 		else if (back || left)
 		{
-<<<<<<< HEAD
-			menustate = MENU_MAIN1;
-			menusub = 8;
-=======
 			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 7;
->>>>>>> Upstream/master
+			menusub = 8;
 		}
 		break;
 
@@ -5076,13 +5465,8 @@ void HandleUI(void)
 			}
 			else if (menusub == 9 && select) // return to previous menu
 			{
-<<<<<<< HEAD
-				menustate = MENU_MAIN1;
-				menusub = 6;
-=======
 				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 5;
->>>>>>> Upstream/master
+				menusub = 6;
 			}
 		}
 
@@ -5093,7 +5477,7 @@ void HandleUI(void)
 		else if (back || left)
 		{
 			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 5;
+			menusub = 6;
 		}
 		break;
 
@@ -5167,14 +5551,13 @@ void HandleUI(void)
 		/* video settings menu                                            */
 		/******************************************************************/
 	case MENU_MINIMIG_VIDEO1:
-		menumask = 0x7f;
+		menumask = 0x1fff;
 		parentstate = menustate;
 		helptext_idx = 0; // helptexts[HELPTEXT_VIDEO];
 
 		m = 0;
-		OsdSetTitle("Video", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
+		OsdSetTitle("Audio & Video", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
 
-		OsdWrite(m++);
 		strcpy(s, " TV Standard   : ");
 		strcat(s, minimig_config.chipset & CONFIG_NTSC ? "NTSC" : "PAL");
 		OsdWrite(m++, s, menusub == 0, 0);
@@ -5188,15 +5571,34 @@ void HandleUI(void)
 		strcpy(s, " Aspect Ratio  : ");
 		minimig_config.scanlines = (get_ar_name((minimig_config.scanlines >> 4) & 3, s) << 4) | (minimig_config.scanlines & ~0x30);
 		OsdWrite(m++, s, menusub == 3, 0);
-		OsdWrite(m++, "", 0, 0);
+		strcpy(s, " Pixel Clock   : ");
+		strcat(s, (minimig_get_extcfg() & 0x400) ? "Adaptive" : "28MHz");
+		OsdWrite(m++, s, menusub == 4, 0);
+		strcpy(s, " Scaling       : ");
+		strcat(s,config_scale[(minimig_get_extcfg() >> 11) & 7]);
+		OsdWrite(m++, s, menusub == 5, 0);
+		strcpy(s, " RTG Upscaling : ");
+		strcat(s, (minimig_get_extcfg() & 0x4000) ? "HV-Integer" : "Normal");
+		OsdWrite(m++, s, menusub == 6, 0);
+
+		OsdWrite(m++);
 		strcpy(s, " Stereo mix    : ");
 		strcat(s, config_stereo_msg[minimig_config.audio & 3]);
-		OsdWrite(m++, s, menusub == 4, 0);
-		OsdWrite(m++, "", 0, 0);
-		OsdWrite(m++, "", 0, 0);
-		OsdWrite(m++, minimig_get_adjust() ? " Finish screen adjustment" : " Adjust screen position", menusub == 5, 0);
+		OsdWrite(m++, s, menusub == 7, 0);
+		strcpy(s, " Audio Filter  : ");
+		strcat(s, (~minimig_get_extcfg() & 0x10000) ? "Auto(LED)" : (minimig_get_extcfg() & 0x8000) ? "On" : "Off");
+		OsdWrite(m++, s, menusub == 8, 0);
+		strcpy(s, " Model         : ");
+		strcat(s, (minimig_get_extcfg() & 0x20000) ? "A1200" : "A500");
+		OsdWrite(m++, s, menusub == 9, 0);
+		strcpy(s, " Paula Output  : ");
+		strcat(s, (minimig_get_extcfg() & 0x40000) ? "PWM" : "Normal");
+		OsdWrite(m++, s, menusub == 10, 0);
+
+		OsdWrite(m++);
+		OsdWrite(m++, minimig_get_adjust() ? " Finish screen adjustment" : " Adjust screen position", menusub == 11, 0);
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 6, 0);
+		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 12, 0);
 
 		menustate = MENU_MINIMIG_VIDEO2;
 		break;
@@ -5206,73 +5608,119 @@ void HandleUI(void)
 		if (select || minus || plus)
 		{
 			menustate = MENU_MINIMIG_VIDEO1;
-			if (menusub == 0)
+			switch(menusub)
 			{
+			case 0:
 				minimig_config.chipset ^= CONFIG_NTSC;
 				minimig_ConfigChipset(minimig_config.chipset);
-			}
-			else if (menusub == 1)
-			{
-				int scanlines = minimig_config.scanlines & 7;
-				if (minus)
+				break;
+
+			case 1:
 				{
-					scanlines--;
-					if (scanlines < 0) scanlines = 4;
+					int scanlines = minimig_config.scanlines & 7;
+					if (minus)
+					{
+						scanlines--;
+						if (scanlines < 0) scanlines = 4;
+					}
+					else
+					{
+						scanlines++;
+						if (scanlines > 4) scanlines = 0;
+					}
+					minimig_config.scanlines = scanlines | (minimig_config.scanlines & 0xf8);
+					minimig_ConfigVideo(minimig_config.scanlines);
 				}
-				else
-				{
-					scanlines++;
-					if (scanlines > 4) scanlines = 0;
-				}
-				minimig_config.scanlines = scanlines | (minimig_config.scanlines & 0xf8);
-				minimig_ConfigVideo(minimig_config.scanlines);
-			}
-			else if (menusub == 2)
-			{
+				break;
+
+			case 2:
 				minimig_config.scanlines &= ~0x80;
 				minimig_config.scanlines ^= 0x40;
 				minimig_ConfigVideo(minimig_config.scanlines);
-			}
-			else if (menusub == 3)
-			{
+				break;
+
+			case 3:
 				minimig_config.scanlines = (next_ar((minimig_config.scanlines >> 4) & 3, minus) << 4) | (minimig_config.scanlines & ~0x30);
 				minimig_ConfigVideo(minimig_config.scanlines);
-			}
-			else if (menusub == 4)
-			{
+				break;
+
+			case 4:
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x400);
+				break;
+
+			case 5:
+				{
+					int mode = (minimig_get_extcfg() >> 11) & 7;
+					if (minus) mode = (mode <= 0) ? 4 : (mode - 1);
+					else mode = (mode >= 4) ? 0 : (mode + 1);
+					minimig_set_extcfg((minimig_get_extcfg() & ~0x3800) | (mode << 11));
+				}
+				break;
+
+			case 6:
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x4000);
+				break;
+
+			case 7:
 				minimig_config.audio = (minimig_config.audio + (minus ? -1 : 1)) & 3;
 				minimig_ConfigAudio(minimig_config.audio);
+<<<<<<< HEAD
 			}
-			else if (menusub == 5 && select)
+			else if (menusub == 8 && select)
 			{
 				menustate = MENU_NONE1;
 				minimig_set_adjust(minimig_get_adjust() ? 0 : 1);
 			}
-			else if (menusub == 6)
+			else if (menusub == 9)
 			{
-<<<<<<< HEAD
-				menustate = MENU_MAIN1;
+				menustate = MENU_MINIMIG_MAIN1;
 				menusub = 9;
 =======
-				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 8;
->>>>>>> Upstream/master
+				break;
+
+			case 8:
+				{
+					int mode = (minimig_get_extcfg() >> 15) & 3;
+					if (minus) mode = (mode == 2) ? 0 : (mode - 1);
+					else mode = (mode == 0) ? 2 : (mode + 1);
+					minimig_set_extcfg((minimig_get_extcfg() & ~0x18000) | ((mode & 3) << 15));
+				}
+				break;
+
+			case 9:
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x20000);
+				break;
+
+			case 10:
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x40000);
+				break;
+
+			case 11:
+				if (select)
+				{
+					menustate = MENU_NONE1;
+					minimig_set_adjust(minimig_get_adjust() ? 0 : 1);
+				}
+				break;
+
+			case 12:
+				if (select)
+				{
+					menustate = MENU_MINIMIG_MAIN1;
+					menusub = 8;
+				}
+				break;
+>>>>>>> upstream/master
 			}
 		}
-
-		if (menu)
+		else if (menu)
 		{
 			menustate = MENU_NONE1;
 		}
 		else if (back || left)
 		{
-<<<<<<< HEAD
-			menustate = MENU_MAIN1;
-			menusub = 9;
-=======
 			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 8;
->>>>>>> Upstream/master
+			menusub = 9;
 		}
 		break;
 
@@ -5354,6 +5802,7 @@ void HandleUI(void)
 		while(m < OsdGetSize()-1) OsdWrite(m++, "");
 		OsdWrite(15, STD_EXIT, menusub == 5);
 		menustate = MENU_SYSTEM2;
+		break;
 
 	case MENU_SYSTEM2:
 		if (menu)
@@ -5480,42 +5929,56 @@ void HandleUI(void)
 
 	case MENU_LGCAL:
 		helptext_idx = 0;
-		OsdSetTitle("Wiimote Calibration", 0);
+		OsdSetTitle("Lightgun Calibration", 0);
 		for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i);
-		OsdWrite(9, "  Point Wiimote to the edge");
-		OsdWrite(10, "     of screen and press");
-		OsdWrite(11, "   the button B to confirm");
+		OsdWrite(9,  "     Point to the edge of");
+		OsdWrite(10, "   screen and press trigger");
+		OsdWrite(11, "         to confirm");
 		OsdWrite(OsdGetSize() - 1, "           Cancel", menusub == 0, 0);
-		wm_ok = 0;
-		wm_side = 0;
-		memset(wm_pos, 0, sizeof(wm_pos));
+		gun_ok = 0;
+		gun_side = 0;
+		gun_y = 0;
+		gun_x = 0;
+		memset(gun_pos, 0, sizeof(gun_pos));
 		menustate = MENU_LGCAL1;
 		menusub = 0;
 		break;
 
 	case MENU_LGCAL1:
-		if (wm_side < 4) wm_pos[wm_side] = (wm_side < 2) ? wm_y : wm_x;
-		sprintf(s, "           %c%04d%c", (wm_side == 0) ? 17 : 32, (wm_side == 0) ? wm_y : wm_pos[0], (wm_side == 0) ? 16 : 32);
+		{
+			static int state = 0;
+			static uint32_t blink = 0;
+			if (!blink || CheckTimer(blink))
+			{
+				blink = GetTimer(300);
+				state = !state;
+			}
+
+			m = !state;
+		}
+
+		if (gun_side < 4) gun_pos[gun_side] = (gun_side < 2) ? gun_y : gun_x;
+		sprintf(s, "           %c%04d%c", (gun_side == 0 && m) ? 17 : 32, (gun_side == 0) ? gun_y : gun_pos[0], (gun_side == 0 && m) ? 16 : 32);
 		OsdWrite(0, s);
-		sprintf(s, "%c%04d%c                 %c%04d%c", (wm_side == 2) ? 17 : 32, (wm_side == 2) ? wm_x : wm_pos[2], (wm_side == 2) ? 16 : 32,
-		                                                (wm_side == 3) ? 17 : 32, (wm_side == 3) ? wm_x : wm_pos[3], (wm_side == 3) ? 16 : 32);
+		sprintf(s, "%c%04d%c                 %c%04d%c", (gun_side == 2 && m) ? 17 : 32, (gun_side == 2) ? gun_x : gun_pos[2], (gun_side == 2 && m) ? 16 : 32,
+		                                                (gun_side == 3 && m) ? 17 : 32, (gun_side == 3) ? gun_x : gun_pos[3], (gun_side == 3 && m) ? 16 : 32);
 		OsdWrite(7, s);
-		sprintf(s, "           %c%04d%c", (wm_side == 1) ? 17 : 32, (wm_side == 1) ? wm_y : wm_pos[1], (wm_side == 1) ? 16 : 32);
+		sprintf(s, "           %c%04d%c", (gun_side == 1 && m) ? 17 : 32, (gun_side == 1) ? gun_y : gun_pos[1], (gun_side == 1 && m) ? 16 : 32);
 		OsdWrite(13, s);
 		if (menu || select) menustate = MENU_NONE1;
 
-		if (wm_ok == 1)
+		if (gun_ok == 1)
 		{
-			wm_ok = 0;
-			wm_side++;
+			gun_ok = 0;
+			gun_side++;
 		}
 
-		if (wm_ok == 2)
+		if (gun_ok == 2)
 		{
-			wm_ok = 0;
-			if (wm_side == 4)
+			gun_ok = 0;
+			if (gun_side == 4)
 			{
-				input_lightgun_cal(wm_pos);
+				input_lightgun_save(gun_idx, gun_pos);
 				menustate = MENU_NONE1;
 			}
 		}
@@ -6138,20 +6601,21 @@ void Info(const char *message, int timeout, int width, int height, int frame)
 	}
 }
 
-int menu_lightgun_cb(uint16_t type, uint16_t code, int value)
+int menu_lightgun_cb(int idx, uint16_t type, uint16_t code, int value)
 {
 	if (type == EV_ABS)
 	{
-		if (code == 0 && value) wm_x = value;
-		if (code == 1 && value != 1023) wm_y = value;
+		if (code == 0 && value) gun_x = value;
+		if (code == 1 && value != 1023) gun_y = value;
 	}
 
 	if (type == EV_KEY)
 	{
-		if (code == 0x131 && menustate == MENU_LGCAL1)
+		if ((code == 0x130 || code == 0x131) && menustate == MENU_LGCAL1)
 		{
-			if (value == 1) wm_ok = 1;
-			if (value == 0) wm_ok = 2;
+			gun_idx = idx;
+			if (value == 1) gun_ok = 1;
+			if (value == 0) gun_ok = 2;
 			return 1;
 		}
 	}
@@ -6182,4 +6646,9 @@ int menu_allow_cfg_switch()
 	}
 
 	return 0;
+}
+
+void menu_process_save()
+{
+	menu_save_timer = GetTimer(1000);
 }
