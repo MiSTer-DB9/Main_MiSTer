@@ -56,13 +56,14 @@ typedef struct
 	mm_hardfileTYPE hardfile[4];
 	unsigned char   cpu;
 	unsigned char   autofire;
-	char            info[64];  
+	char            info[64];
 } mm_configTYPE_nodb9;
 
 typedef struct
 {
 	char            id[8];
 	unsigned long   version;
+	unsigned short  ext_cfg2;
 	char            kickstart[992];
 	char            label[32];
 	unsigned short  ext_cfg;
