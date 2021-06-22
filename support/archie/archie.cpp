@@ -146,18 +146,6 @@ int archie_get_amix()
 	return (config.system_ctrl>>1) & 3;
 }
 
-void archie_set_db9mode(unsigned char i)
-{
-	config.system_ctrl = (config.system_ctrl & ~0b11100000000000000000000) | ((i & 7)<<20); // 20 zeroes here
-	user_io_8bit_set_status(config.system_ctrl << 1, 0b111000000000000000000000); // 21 zeroes here (status[21-23])
-}
-
-unsigned char archie_get_db9mode()
-{
-	unsigned char result = (config.system_ctrl>>20) & 7;
-	return result == 0 ? 1 : result;
-}
-
 void archie_save_config(void)
 {
 	FileSaveConfig(CONFIG_FILENAME, &config, sizeof(config));
@@ -325,7 +313,7 @@ void archie_init()
 	archie_set_amix(archie_get_amix());
 	archie_set_60(archie_get_60());
 	archie_set_afix(archie_get_afix());
-	archie_set_db9mode(archie_get_db9mode());
+
 	if(!config.hdd_img[0][0] || !OpenHardfile(0, config.hdd_img[0]))
 	{
 		memset(config.hdd_img[0], 0, sizeof(config.hdd_img[0]));

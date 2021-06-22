@@ -72,7 +72,6 @@ enum MENU
 	MENU_MISC1,
 	MENU_MISC2,
 
-	MENU_ERROR,
 	MENU_INFO,
 
 	MENU_FILE_SELECT1,
@@ -82,6 +81,8 @@ enum MENU
 	MENU_CORE_FILE_CANCELED,
 	MENU_RECENT1,
 	MENU_RECENT2,
+	MENU_RECENT3,
+	MENU_RECENT4,
 	MENU_ABOUT1,
 	MENU_ABOUT2,
 	MENU_RESET1,
@@ -145,15 +146,13 @@ enum MENU
 	MENU_MINIMIG_MAIN2,
 	MENU_MINIMIG_VIDEO1,
 	MENU_MINIMIG_VIDEO2,
-	MENU_MINIMIG_MEMORY1,
-	MENU_MINIMIG_MEMORY2,
 	MENU_MINIMIG_CHIPSET1,
 	MENU_MINIMIG_CHIPSET2,
-	MENU_MINIMIG_HARDFILE1,
-	MENU_MINIMIG_HARDFILE2,
-	MENU_MINIMIG_HARDFILE_SELECTED,
-	MENU_MINIMIG_HARDFILE_SELECTED2,
-	MENU_MINIMIG_HARDFILE_SELECTED3,
+	MENU_MINIMIG_DISK1,
+	MENU_MINIMIG_DISK2,
+	MENU_MINIMIG_HDFFILE_SELECTED,
+	MENU_MINIMIG_HDFFILE_SELECTED2,
+	MENU_MINIMIG_HDFFILE_SELECTED3,
 	MENU_MINIMIG_ADFFILE_SELECTED,
 	MENU_MINIMIG_ROMFILE_SELECTED,
 	MENU_MINIMIG_LOADCONFIG1,
@@ -191,6 +190,7 @@ static uint32_t menusub_last = 0; //for when we allocate it dynamically and need
 static uint64_t menumask = 0; // Used to determine which rows are selectable...
 static uint32_t menu_timer = 0;
 static uint32_t menu_save_timer = 0;
+static uint32_t load_addr = 0;
 
 extern const char *version;
 
@@ -212,7 +212,6 @@ const char *config_scaler_msg[] = { "Internal","Custom" };
 const char *config_afilter_msg[] = { "Internal","Custom" };
 const char *config_gamma_msg[] = { "Off","On" };
 const char *config_scale[] = { "Normal", "V-Integer", "HV-Integer-", "HV-Integer+", "HV-Integer", "???", "???", "???" };
-const char *config_db9type_msg[] = { "--",  "Off", "DB9MD 1 Player", "DB9MD 2 Players", "DB15 1 Player", "DB15 2 Players" }; // Added for DB9 menus
 
 #define DPAD_NAMES 4
 #define DPAD_BUTTON_NAMES 12  //DPAD_NAMES + 6 buttons + start/select
@@ -233,7 +232,7 @@ static char helptext_custom[1024];
 
 enum HelpText_Message
 {
-	HELPTEXT_NONE, HELPTEXT_CUSTOM, HELPTEXT_MAIN, HELPTEXT_HARDFILE, HELPTEXT_CHIPSET, HELPTEXT_MEMORY, HELPTEXT_EJECT
+	HELPTEXT_NONE, HELPTEXT_CUSTOM, HELPTEXT_MAIN, HELPTEXT_HARDFILE, HELPTEXT_CHIPSET, HELPTEXT_MEMORY, HELPTEXT_EJECT, HELPTEXT_CLEAR
 };
 
 static const char *helptexts[] =
@@ -245,6 +244,7 @@ static const char *helptexts[] =
 	"                                Minimig's processor core can emulate a 68000 (cycle accuracy as A500/A600) or 68020 (maximum performance) processor with transparent cache.",
 	"                                Minimig can make use of up to 2 megabytes of Chip RAM, up to 1.5 megabytes of Slow RAM (A500 Trapdoor RAM), and up to 384 megabytes of Fast RAM (8MB max for 68000 mode). To use the HRTmon feature you will need a file on the SD card named hrtmon.rom.",
 	"                                Backspace key (or B-hold + A on gamepad) to unmount",
+	"                                Backspace key (or B-hold + A on gamepad) to clear stored option. You have to reload the core to be able to use default value.",
 };
 
 static const uint32_t helptext_timeouts[] =
@@ -255,6 +255,7 @@ static const uint32_t helptext_timeouts[] =
 	10000,
 	10000,
 	10000,
+	2000,
 	2000
 };
 
@@ -289,8 +290,13 @@ static char SelectedDir[1024] = {};
 static char SelectedLabel[1024] = {};
 
 static char Selected_F[16][1024] = {};
-static char Selected_S[8][1024] = {};
+static char Selected_S[16][1024] = {};
 static char Selected_tmp[1024] = {};
+
+void StoreIdx_F(int idx, char *path)
+{
+	strcpy(Selected_F[idx], path);
+}
 
 static char selPath[1024] = {};
 
@@ -377,8 +383,8 @@ static void SelectFile(const char* path, const char* pFileExt, unsigned char Opt
 		if (home_dir) home_dir++;
 		else home_dir = home;
 
-		if (strncasecmp(home, selPath, strlen(home)) || !strcasecmp(home, selPath))
-	{
+		if (strncasecmp(home, selPath, strlen(home)) || !strcasecmp(home, selPath) || (!FileExists(selPath) && !PathIsDir(selPath)))
+		{
 			Options &= ~SCANO_NOENTER;
 			strcpy(selPath, home);
 		}
@@ -396,13 +402,14 @@ static void SelectFile(const char* path, const char* pFileExt, unsigned char Opt
 	menustate = MENU_FILE_SELECT1;
 }
 
-void substrcpy(char *d, char *s, char idx)
+int substrcpy(char *d, const char *s, char idx)
 {
 	char p = 0;
+	char *b = d;
 
-	while (*s) {
-		if ((p == idx) && *s && (*s != ','))
-			*d++ = *s;
+	while (*s)
+	{
+		if ((p == idx) && *s && (*s != ',')) *d++ = *s;
 
 		if (*s == ',')
 		{
@@ -414,9 +421,11 @@ void substrcpy(char *d, char *s, char idx)
 	}
 
 	*d = 0;
+	return (int)(d - b);
 }
 
 #define STD_EXIT       "            exit"
+#define STD_BACK       "            back"
 #define STD_SPACE_EXIT "        SPACE to exit"
 #define STD_COMBO_EXIT "      Ctrl+ESC to exit"
 
@@ -843,7 +852,7 @@ static void vga_nag()
 		OsdWrite(n++, "       vga_scaler=1");
 		for (; n < OsdGetSize(); n++) OsdWrite(n);
 		OsdUpdate();
-		OsdEnable(0);
+		OsdEnable(OSD_MSG);
 		EnableOsd_on(OSD_HDMI);
 	}
 
@@ -984,7 +993,6 @@ void HandleUI(void)
 	{
 	case CORE_TYPE_8BIT:
 	case CORE_TYPE_SHARPMZ:
-	case CORE_TYPE_ARCHIE:
 		break;
 
 	default:
@@ -1014,13 +1022,14 @@ void HandleUI(void)
 	static int has_fb_terminal = 0;
 	static unsigned long flash_timer = 0;
 	static int flash_state = 0;
-	static uint32_t dip_submenu;
+	static uint32_t dip_submenu, dip2_submenu, dipv;
 	static int need_reset = 0;
 	static int flat = 0;
 	static int menusub_parent = 0;
 	static char title[32] = {};
 	static uint32_t saved_menustate = 0;
 	static char addon[1024];
+	static int store_name;
 
 	static char	cp_MenuCancel;
 
@@ -1099,6 +1108,7 @@ void HandleUI(void)
 		case KEY_F12:
 			menu = true;
 			menu_key_set(KEY_F12 | UPSTROKE);
+			if(video_fb_state()) video_menu_bg((user_io_8bit_set_status(0, 0) & 0xE) >> 1);
 			video_fb_enable(0);
 			break;
 
@@ -1210,12 +1220,12 @@ void HandleUI(void)
 		}
 		else if (helpstate == 9)
 		{
-			ScrollReset();
+			ScrollReset(1);
 			++helpstate;
 		}
 		else
 		{
-			ScrollText(OsdGetSize() - 1, helptexts[helptext_idx], 0, 0, 0, 0);
+			ScrollText(OsdGetSize() - 1, helptexts[helptext_idx], 0, 0, 0, 0, 1);
 		}
 	}
 
@@ -1280,7 +1290,6 @@ void HandleUI(void)
 	case MENU_NONE1:
 	case MENU_NONE2:
 	case MENU_INFO:
-	case MENU_ERROR:
 		break;
 
 	default:
@@ -1306,7 +1315,6 @@ void HandleUI(void)
 	case MENU_INFO:
 		if (CheckTimer(menu_timer)) menustate = MENU_NONE1;
 		// fall through
-	case MENU_ERROR:
 	case MENU_NONE2:
 		if (menu || (is_menu() && !video_fb_state()))
 		{
@@ -1385,7 +1393,7 @@ void HandleUI(void)
 		strcat(s, archie_get_rom_name());
 		OsdWrite(m++, s, menusub == 4);
 
-		//OsdWrite(m++);
+		OsdWrite(m++);
 
 		strcpy(s, " Aspect Ratio:    ");
 		archie_set_ar(get_ar_name(archie_get_ar(), s));
@@ -1408,17 +1416,12 @@ void HandleUI(void)
 
 		sprintf(s, " Swap Joysticks:  %s", user_io_get_joyswap() ? "Yes" : "No");
 		OsdWrite(m++, s, menusub == 10);
-
 		sprintf(s, " Swap Btn 2/3:    %s", archie_get_mswap() ? "Yes" : "No");
 		OsdWrite(m++, s, menusub == 11);
 
-		sprintf(s, " UserIO Joys: ");
-		strcat(s, config_db9type_msg[archie_get_db9mode()]);
-		OsdWrite(m++, s, menusub == 12);
-
 		while(m<15) OsdWrite(m++);
 
-		OsdWrite(15, STD_EXIT, menusub == 13, 0);
+		OsdWrite(15, STD_EXIT, menusub == 12, 0);
 		menustate = MENU_ARCHIE_MAIN2;
 		parentstate = MENU_ARCHIE_MAIN1;
 
@@ -1505,23 +1508,7 @@ void HandleUI(void)
 				menustate = MENU_ARCHIE_MAIN1;
 				break;
 
-			case 12:
-				switch (archie_get_db9mode())
-				{
-				case 0:
-					archie_set_db9mode(2);
-					break;
-				case 5:
-					archie_set_db9mode(1);
-					break;
-				default:
-					archie_set_db9mode(archie_get_db9mode() + 1);
-					break;
-				}
-				menustate = MENU_ARCHIE_MAIN1;
-				break;
-
-			case 13:  // Exit
+			case 12:  // Exit
 				if (select) menustate = MENU_NONE1;
 				break;
 			}
@@ -1580,12 +1567,13 @@ void HandleUI(void)
 			menumask = 0;
 			p = user_io_get_core_name();
 			if (!p[0]) OsdCoreNameSet("8BIT");
-			else      OsdCoreNameSet(p);
+			else       OsdCoreNameSet(p);
 
 			if(!page) OsdSetTitle(OsdCoreNameGet());
 			else OsdSetTitle(title);
 
 			dip_submenu = -1;
+			dip2_submenu = -1;
 
 			int last_space = 0;
 
@@ -1602,9 +1590,13 @@ void HandleUI(void)
 				{
 					int h = 0, d = 0, inpage = !page;
 
-					if (!strcmp(p, "DIP"))
+					if (!strncmp(p, "DEFMRA,", 7))
 					{
-						if (arcade_sw()->dip_num)
+					}
+					else if (!strcmp(p, "DIP"))
+					{
+						h = page;
+						if (!h && arcade_sw(0)->dip_num)
 						{
 							dip_submenu = selentry;
 							MenuWrite(entry, " DIP Switches              \x16", menusub == selentry, 0);
@@ -1612,6 +1604,20 @@ void HandleUI(void)
 							selentry++;
 							menumask = (menumask << 1) | 1;
 						}
+						continue;
+					}
+					else if (!strcmp(p, "CHEAT"))
+					{
+						h = page;
+						if (!h && arcade_sw(1)->dip_num)
+						{
+							dip2_submenu = selentry;
+							MenuWrite(entry, " Cheats                    \x16", menusub == selentry, 0);
+							entry++;
+							selentry++;
+							menumask = (menumask << 1) | 1;
+						}
+						continue;
 					}
 					else
 					{
@@ -1661,13 +1667,13 @@ void HandleUI(void)
 								s[28] = 0;
 							}
 							else
-					{
+							{
 								strcpy(s, " ");
 								substrcpy(s + 1, p, 1);
 
 								int len = strlen(s);
 								while (len < 27) s[len++] = ' ';
-								s[27] = 17;
+								s[27] = 0x16;
 								s[28] = 0;
 							}
 
@@ -1695,20 +1701,20 @@ void HandleUI(void)
 							}
 							else
 							{
-							if (strlen(s))
-							{
-								strcpy(s, " ");
-								substrcpy(s + 1, p, 2);
-								strcat(s, " *.");
-							}
-							else
-							{
-								if (p[0] == 'F') strcpy(s, " Load *.");
-								else             strcpy(s, " Mount *.");
-							}
-							pos = s + strlen(s);
-							substrcpy(pos, p, 1);
-							strcpy(pos, GetExt(pos));
+								if (strlen(s))
+								{
+									strcpy(s, " ");
+									substrcpy(s + 1, p, 2);
+									strcat(s, " *.");
+								}
+								else
+								{
+									if (p[0] == 'F') strcpy(s, " Load *.");
+									else             strcpy(s, " Mount *.");
+								}
+								pos = s + strlen(s);
+								substrcpy(pos, p, 1);
+								strcpy(pos, GetExt(pos));
 							}
 							MenuWrite(entry, s, menusub == selentry, d);
 
@@ -1788,7 +1794,11 @@ void HandleUI(void)
 							while ((end > s + 1) && (*end == ' ')) end--;
 							*(end + 1) = 0;
 
-							strcat(s, ":");
+							int len = strlen(s);
+							if (len+l > 27) len = 27-l;
+							s[len++] = ':';
+							s[len] = 0;
+
 							l = 28 - l - strlen(s);
 							while (l--) strcat(s, " ");
 
@@ -1834,11 +1844,11 @@ void HandleUI(void)
 			// exit row
 			if (!page)
 			{
-			MenuWrite(entry, STD_EXIT, menusub == selentry, 0, OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
+				MenuWrite(entry, STD_EXIT, menusub == selentry, 0, OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
 			}
 			else
 			{
-				MenuWrite(entry, "            back", menusub == selentry, 0, 0);
+				MenuWrite(entry, STD_BACK, menusub == selentry, 0, 0);
 			}
 			menusub_last = selentry;
 			menumask = (menumask << 1) | 1;
@@ -1867,6 +1877,12 @@ void HandleUI(void)
 		// set helptext with core display on top of basic info
 		sprintf(helptext_custom, HELPTEXT_SPACER);
 		strcat(helptext_custom, OsdCoreNameGet());
+		if (is_arcade())
+		{
+			strcat(helptext_custom, " (");
+			strcat(helptext_custom, user_io_get_core_name(1));
+			strcat(helptext_custom, ")");
+		}
 		strcat(helptext_custom, helptexts[HELPTEXT_MAIN]);
 		helptext_idx = HELPTEXT_CUSTOM;
 
@@ -1895,30 +1911,22 @@ void HandleUI(void)
 		{
 			menustate = MENU_NONE1;
 		}
-		else if(back)
+		else if(back || (left && page) || (menusub == menusub_last && select))
 		{
 			if(!page) menustate = MENU_NONE1;
 			else
 			{
+				firstmenu = 0;
 				menustate = MENU_GENERIC_MAIN1;
 				menusub = menusub_parent;
 				page = 0;
-		}
+			}
 		}
 		else if (select || recent || minus || plus)
 		{
-			if (menusub == menusub_last && select)
+			if ((dip_submenu == menusub || dip2_submenu == menusub) && select)
 			{
-				if (!page) menustate = MENU_NONE1;
-				else
-				{
-					menustate = MENU_GENERIC_MAIN1;
-					menusub = menusub_parent;
-					page = 0;
-				}
-			}
-			else if (dip_submenu == menusub && select)
-			{
+				dipv = (dip_submenu == menusub) ? 0 : 1;
 				menustate = MENU_ARCADE_DIP1;
 				menusub = 0;
 			}
@@ -1935,13 +1943,15 @@ void HandleUI(void)
 				while (1)
 				{
 					p = user_io_get_confstr(i++);
-					if (!p) continue;
+					if (!p) break;
 
 					h = 0;
 					d = 0;
 					inpage = !page;
 
-					if (strcmp(p, "DIP"))
+					if (!strcmp(p, "DIP")) h = page || !arcade_sw(0)->dip_num;
+					else if (!strcmp(p, "CHEAT")) h = page || !arcade_sw(1)->dip_num;
+					else if (strncmp(p, "DEFMRA,", 7))
 					{
 						//Hide or Disable flag
 						while ((p[0] == 'H' || p[0] == 'D' || p[0] == 'h' || p[0] == 'd') && strlen(p) > 2)
@@ -1953,10 +1963,6 @@ void HandleUI(void)
 							if (p[0] == 'd') d |= (flg ^ 1);
 							p += 2;
 						}
-					}
-					else if (!arcade_sw()->dip_num)
-					{
-						continue;
 					}
 
 					if (p[0] == 'P')
@@ -1989,6 +1995,7 @@ void HandleUI(void)
 				{
 					if (p[0] == 'F' && (select || recent))
 					{
+						store_name = 0;
 						opensave = 0;
 						ioctl_index = menusub + 1;
 						int idx = 1;
@@ -1998,16 +2005,32 @@ void HandleUI(void)
 							opensave = 1;
 							idx++;
 						}
+						else if (p[1] == 'C')
+						{
+							store_name = 1;
+							idx++;
+						}
 
 						if (p[idx] >= '0' && p[idx] <= '9') ioctl_index = p[idx] - '0';
 						substrcpy(ext, p, 1);
 						if (is_gba() && FileExists(user_io_make_filepath(HomeDir(), "goomba.rom"))) strcat(ext, "GB GBC");
 						while (strlen(ext) % 3) strcat(ext, " ");
 
-						fs_Options = SCANO_DIR | (is_neogeo() ? SCANO_NEOGEO | SCANO_NOENTER : 0);
+						fs_Options = SCANO_DIR | (is_neogeo() ? SCANO_NEOGEO | SCANO_NOENTER : 0) | (store_name ? SCANO_CLEAR : 0);
 						fs_MenuSelect = MENU_GENERIC_FILE_SELECTED;
 						fs_MenuCancel = MENU_GENERIC_MAIN1;
 						strcpy(fs_pFileExt, ext);
+
+						load_addr = 0;
+						if (substrcpy(s, p, 3))
+						{
+							load_addr = strtoul(s, NULL, 16);
+							if (load_addr < 0x20000000 || load_addr >= 0x40000000)
+							{
+								printf("Loading address 0x%X is outside the supported range! Using normal load.\n", load_addr);
+								load_addr = 0;
+							}
+						}
 
 						if (select) SelectFile(Selected_F[ioctl_index & 15], ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
 						else if(recent_init(ioctl_index)) menustate = MENU_RECENT1;
@@ -2015,7 +2038,7 @@ void HandleUI(void)
 					else if (p[0] == 'S' && (select || recent))
 					{
 						ioctl_index = 0;
-						if ((p[1] >= '0' && p[1] <= '3') || is_x86()) ioctl_index = p[1] - '0';
+						if ((p[1] >= '0' && p[1] <= '9') || is_x86()) ioctl_index = p[1] - '0';
 						substrcpy(ext, p, 1);
 						while (strlen(ext) % 3) strcat(ext, " ");
 
@@ -2040,10 +2063,10 @@ void HandleUI(void)
 
 							if (num == 1)
 							{
-							fs_Options |= SCANO_NOENTER;
-							char *p = strrchr(Selected_tmp, '/');
-							if (p) *p = 0;
-						}
+								fs_Options |= SCANO_NOENTER;
+								char *p = strrchr(Selected_tmp, '/');
+								if (p) *p = 0;
+							}
 
 							fs_Options |= SCANO_NOZIP;
 						}
@@ -2156,9 +2179,9 @@ void HandleUI(void)
 						page = 0;
 						menustate = MENU_GENERIC_MAIN1;
 						menusub = 0;
+					}
 				}
 			}
-		}
 		}
 		else if (right && !page)
 		{
@@ -2167,17 +2190,8 @@ void HandleUI(void)
 		}
 		else if (left)
 		{
-			if (page)
-			{
-				menustate = MENU_GENERIC_MAIN1;
-				menusub = menusub_parent;
-				page = 0;
-			}
-			else
-			{
-				menustate = MENU_MISC1;
-				menusub = 3;
-			}
+			menustate = MENU_MISC1;
+			menusub = 3;
 		}
 		else if(spi_uio_cmd16(UIO_GET_OSDMASK, 0) != hdmask)
 		{
@@ -2192,28 +2206,39 @@ void HandleUI(void)
 			printf("File selected: %s\n", selPath);
 			memcpy(Selected_F[ioctl_index & 15], selPath, sizeof(Selected_F[ioctl_index & 15]));
 
-			char idx = user_io_ext_idx(selPath, fs_pFileExt) << 6 | ioctl_index;
-			if (addon[0] == 'f' && addon[1] != '1') process_addon(addon, idx);
-
-			if (fs_Options & SCANO_NEOGEO)
+			if (store_name)
 			{
-				neogeo_romset_tx(selPath);
+				char str[64];
+				sprintf(str, "%s.f%d", user_io_get_core_name(), ioctl_index);
+				FileSaveConfig(str, selPath, sizeof(selPath));
 			}
-			else
+
+			if (selPath[0])
 			{
-				if (is_pce())
+
+				char idx = user_io_ext_idx(selPath, fs_pFileExt) << 6 | ioctl_index;
+				if (addon[0] == 'f' && addon[1] != '1') process_addon(addon, idx);
+
+				if (fs_Options & SCANO_NEOGEO)
 				{
-					pcecd_set_image(0, "");
-					pcecd_reset();
+					neogeo_romset_tx(selPath);
 				}
-				user_io_store_filename(selPath);
-				user_io_file_tx(selPath, idx, opensave);
-				if (user_io_use_cheats()) cheats_init(selPath, user_io_get_file_crc());
+				else
+				{
+					if (is_pce())
+					{
+						pcecd_set_image(0, "");
+						pcecd_reset();
+					}
+					if (!store_name) user_io_store_filename(selPath);
+					user_io_file_tx(selPath, idx, opensave, 0, 0, load_addr);
+					if (user_io_use_cheats()) cheats_init(selPath, user_io_get_file_crc());
+				}
+
+				if (addon[0] == 'f' && addon[1] == '1') process_addon(addon, idx);
+
+				recent_update(SelectedDir, Selected_F[ioctl_index & 15], SelectedLabel, ioctl_index);
 			}
-
-			if (addon[0] == 'f' && addon[1] == '1') process_addon(addon, idx);
-
-			recent_update(SelectedDir, Selected_F[ioctl_index & 15], SelectedLabel, ioctl_index);
 		}
 		break;
 
@@ -2274,7 +2299,7 @@ void HandleUI(void)
 
 				MenuWrite(n++, " Core                      \x16", menusub == 0, 0);
 				MenuWrite(n++);
-				sprintf(s, " Define %s buttons         ", is_menu() ? "System" : user_io_get_core_name_ex());
+				sprintf(s, " Define %s buttons         ", is_menu() ? "System" : user_io_get_core_name());
 				s[27] = '\x16';
 				s[28] = 0;
 				MenuWrite(n++, s, menusub == 1, 0);
@@ -2554,11 +2579,6 @@ void HandleUI(void)
 			// go back to core requesting this menu
 			switch (user_io_core_type())
 			{
-			case CORE_TYPE_ARCHIE:
-				menusub = 0;
-				menustate = MENU_ARCHIE_MAIN1;
-				break;
-
 			case CORE_TYPE_8BIT:
 				if (is_minimig())
 				{
@@ -2594,7 +2614,7 @@ void HandleUI(void)
 	case MENU_ARCADE_DIP1:
 		helptext_idx = 0;
 		menumask = 0;
-		OsdSetTitle("DIP Switches");
+		OsdSetTitle(dipv ? "Cheats" : "DIP Switches");
 		menustate = MENU_ARCADE_DIP2;
 		parentstate = MENU_ARCADE_DIP1;
 
@@ -2607,7 +2627,7 @@ void HandleUI(void)
 			uint32_t selentry = 0;
 			menumask = 0;
 
-			sw_struct *sw = arcade_sw();
+			sw_struct *sw = arcade_sw(dipv);
 
 			int n = (sw->dip_num < OsdGetSize() - 1) ? (OsdGetSize() - 1 - sw->dip_num) / 2 : 0;
 			for (; entry < n; entry++) MenuWrite(entry);
@@ -2648,7 +2668,7 @@ void HandleUI(void)
 
 			for (; entry < OsdGetSize() - 1; entry++) MenuWrite(entry, "", 0, 0);
 
-			MenuWrite(entry, "       Reset to apply", menusub == selentry);
+			MenuWrite(entry, dipv ? STD_BACK : "       Reset to apply", menusub == selentry);
 			menusub_last = selentry;
 			menumask = (menumask << 1) | 1;
 
@@ -2658,25 +2678,33 @@ void HandleUI(void)
 		break;
 
 	case MENU_ARCADE_DIP2:
-		if (menu)
+		if (menu || left)
 		{
 			menustate = MENU_GENERIC_MAIN1;
-			menusub = dip_submenu;
-			arcade_sw_save();
+			menusub = dipv ? dip2_submenu : dip_submenu;
+			arcade_sw_save(0);
 		}
 
 		if (select)
 		{
 			if (menusub == menusub_last)
 			{
-				arcade_sw_save();
-				user_io_8bit_set_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
-				user_io_8bit_set_status(0, UIO_STATUS_RESET);
-				menustate = MENU_NONE1;
+				if (!dipv)
+				{
+					arcade_sw_save(dipv);
+					user_io_8bit_set_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
+					user_io_8bit_set_status(0, UIO_STATUS_RESET);
+					menustate = MENU_NONE1;
+				}
+				else
+				{
+					menusub = dip2_submenu;
+					menustate = MENU_GENERIC_MAIN1;
+				}
 			}
 			else
 			{
-				sw_struct *sw = arcade_sw();
+				sw_struct *sw = arcade_sw(dipv);
 				uint64_t status = sw->dip_cur & sw->dip[menusub].mask;
 				int m = 0;
 				for (int n = 0; n < sw->dip[menusub].num; n++)
@@ -2691,7 +2719,7 @@ void HandleUI(void)
 				m = (m + 1) % sw->dip[menusub].num;
 				sw->dip_cur = (sw->dip_cur & ~sw->dip[menusub].mask) | sw->dip[menusub].val[m];
 				menustate = MENU_ARCADE_DIP1;
-				arcade_sw_send();
+				arcade_sw_send(dipv);
 			}
 		}
 		break;
@@ -2731,23 +2759,23 @@ void HandleUI(void)
 					sprintf(s, " Type:                %s", midilink ? "  MUNT" : "FSYNTH");
 					OsdWrite(m++, s, menusub == 3);
 
-			OsdWrite(m++);
+					OsdWrite(m++);
 					OsdWrite(m++, " Change Soundfont          \x16", menusub == 4, midilink);
 					menumask |= 0x18;
 				}
-			OsdWrite(m++);
+				OsdWrite(m++);
 
 				menumask |= 0x4;
 			}
 
 			if (mode)
 			{
-			strcpy(s, " Baud                      \x16");
-			sprintf(s + 6, "(%s)", GetUARTbaud_label(GetUARTMode()));
-			s[strlen(s)] = ' ';
+				strcpy(s, " Baud                      \x16");
+				sprintf(s + 6, "(%s)", GetUARTbaud_label(GetUARTMode()));
+				s[strlen(s)] = ' ';
 				OsdWrite(m++, s, menusub == 5, !mode);
 
-			OsdWrite(m++);
+				OsdWrite(m++);
 				OsdWrite(m++, " Reset UART connection", menusub == 6, mode ? 0 : 1);
 
 				menumask |= 0x60;
@@ -2761,7 +2789,7 @@ void HandleUI(void)
 		break;
 
 	case MENU_UART2:
-		if (menu)
+		if (menu || left)
 		{
 			menustate = MENU_COMMON1;
 			menusub = 4;
@@ -2804,8 +2832,8 @@ void HandleUI(void)
 					int midilink = GetMidiLinkMode();
 					SetUARTMode(0);
 
-						if (minus)
-						{
+					if (minus)
+					{
 						if (midilink < 2 || midilink > 3) midilink = 3;
 						else if (midilink == 3)
 						{
@@ -2813,9 +2841,9 @@ void HandleUI(void)
 							midilink = (!stat("/dev/midi1", &filestat) || !stat("/dev/ttyUSB0", &filestat)) ? 2 : 0;
 						}
 						else midilink = 0;
-						}
-						else
-						{
+					}
+					else
+					{
 						if (midilink < 2)
 						{
 							struct stat filestat;
@@ -2844,18 +2872,18 @@ void HandleUI(void)
 
 			case 4:
 				if(select && GetMidiLinkMode() == 0)
-					{
+				{
 					sprintf(Selected_tmp, GetMidiLinkSoundfont());
-						SelectFile(Selected_tmp, "SF2", SCANO_DIR | SCANO_TXT, MENU_SFONT_FILE_SELECTED, MENU_UART1);
-					}
+					SelectFile(Selected_tmp, "SF2", SCANO_DIR | SCANO_TXT, MENU_SFONT_FILE_SELECTED, MENU_UART1);
+				}
 				break;
 
 			case 5:
 				if (select)
 				{
-						menustate = MENU_BAUD1;
-						menusub = GetUARTbaud_idx(GetUARTMode());
-					}
+					menustate = MENU_BAUD1;
+					menusub = GetUARTbaud_idx(GetUARTMode());
+				}
 				break;
 
 			case 6:
@@ -2863,19 +2891,19 @@ void HandleUI(void)
 				{
 					ResetUART();
 					menustate = MENU_COMMON1;
-						menusub = 4;
-					}
+					menusub = 4;
+				}
 				break;
 
 			case 7:
 				if (select)
 				{
 					int mode = GetUARTMode() | (GetMidiLinkMode() << 8);
-					sprintf(s, "uartmode.%s", user_io_get_core_name_ex());
+					sprintf(s, "uartmode.%s", user_io_get_core_name());
 					FileSaveConfig(s, &mode, 4);
 					uint64_t speeds = GetUARTbaud(3);
 					speeds = (speeds << 32) | GetUARTbaud(1);
-					sprintf(s, "uartspeed.%s", user_io_get_core_name_ex());
+					sprintf(s, "uartspeed.%s", user_io_get_core_name());
 					FileSaveConfig(s, &speeds, 8);
 					menustate = MENU_COMMON1;
 					menusub = 4;
@@ -2971,11 +2999,11 @@ void HandleUI(void)
 			int mode = GetUARTMode();
 			const uint32_t *bauds = GetUARTbauds(mode);
 			for (uint32_t i = 0; i < 12; i++)
-				{
+			{
 				if (!bauds[i]) break;
 				menumask |= 1 << i;
 				m = i;
-				}
+			}
 
 			uint32_t start = (16 - m)/2;
 			uint32_t k = 0;
@@ -3011,13 +3039,13 @@ void HandleUI(void)
 				{
 					if (!bauds[i]) break;
 					if (menusub == i)
-			{
+					{
 						ValidateUARTbaud(GetUARTMode(), bauds[i]);
 						if (GetUARTMode() >= 3)
-				{
+						{
 							sprintf(s, "/sbin/mlinkutil BAUD %d", GetUARTbaud(GetUARTMode()));
-					system(s);
-				}
+							system(s);
+						}
 						else
 						{
 							int mode = GetUARTMode();
@@ -3182,10 +3210,6 @@ void HandleUI(void)
 			// go back to core requesting this menu
 			switch (user_io_core_type())
 			{
-			case CORE_TYPE_ARCHIE:
-				menusub = 0;
-				menustate = MENU_ARCHIE_MAIN1;
-				break;
 			case CORE_TYPE_8BIT:
 				if (is_menu())
 				{
@@ -3650,22 +3674,22 @@ void HandleUI(void)
 			menusub = 3;
 		}
 		else if (menusub <= 1 && (select || recent))
-				{
-					if (tos_disk_is_inserted(menusub))
-					{
-						tos_insert_disk(menusub, "");
-						menustate = MENU_ST_MAIN1;
-					}
-					else
-					{
+		{
+			if (tos_disk_is_inserted(menusub))
+			{
+				tos_insert_disk(menusub, "");
+				menustate = MENU_ST_MAIN1;
+			}
+			else
+			{
 				fs_Options = SCANO_DIR;
 				fs_MenuSelect = MENU_ST_FDD_FILE_SELECTED;
 				fs_MenuCancel = MENU_ST_MAIN1;
 				strcpy(fs_pFileExt, "ST");
 				if (select) SelectFile(Selected_F[menusub], "ST", fs_Options, fs_MenuSelect, fs_MenuCancel);
 				else if (recent_init(menusub)) menustate = MENU_RECENT1;
-					}
-				}
+			}
+		}
 		else if (select || minus || plus)
 		{
 			switch (menusub)
@@ -3768,67 +3792,63 @@ void HandleUI(void)
 		snprintf(s, 29, " Cart: %s", tos_get_cartridge_name());
 		OsdWrite(m++, s, menusub == 2);
 
-		strcpy(s, " UserIO Joys: ");
-		strcat(s, config_db9type_msg[tos_get_db9type()]);
-		OsdWrite(m++, s, menusub == 3, 0);
-
 		strcpy(s, " Memory:     ");
 		strcat(s, tos_mem[(tos_system_ctrl() >> 1) & 7]);
+		OsdWrite(m++, s, menusub == 3);
+
+		snprintf(s, 29, " TOS:        %s", tos_get_image_name());
 		OsdWrite(m++, s, menusub == 4);
 
-		snprintf(s, 29, " TOS:       %s", tos_get_image_name());
-		OsdWrite(m++, s, menusub == 5);
-
-		strcpy(s, " Chipset:   ");
+		strcpy(s, " Chipset:    ");
 		// extract  TOS_CONTROL_STE and  TOS_CONTROL_MSTE bits
 		strcat(s, tos_chipset[(tos_system_ctrl() >> 23) & 3]);
-		OsdWrite(m++, s, menusub == 6);
+		OsdWrite(m++, s, menusub == 5);
 
 		// Blitter is always present in >= STE
 		enable = (tos_system_ctrl() & (TOS_CONTROL_STE | TOS_CONTROL_MSTE)) ? 1 : 0;
-		strcpy(s, " Blitter:   ");
+		strcpy(s, " Blitter:    ");
 		strcat(s, ((tos_system_ctrl() & TOS_CONTROL_BLITTER) || enable) ? "On" : "Off");
-		OsdWrite(m++, s, menusub == 7, enable);
+		OsdWrite(m++, s, menusub == 6, enable);
 
 		// Viking card can only be enabled with max 8MB RAM
 		enable = (tos_system_ctrl() & 0xe) <= TOS_MEMCONFIG_8M;
-		strcpy(s, " Viking:    ");
+		strcpy(s, " Viking:     ");
 		strcat(s, ((tos_system_ctrl() & TOS_CONTROL_VIKING) && enable) ? "On" : "Off");
-		OsdWrite(m++, s, menusub == 8, enable ? 0 : 1);
+		OsdWrite(m++, s, menusub == 7, enable ? 0 : 1);
 
-		strcpy(s, " Aspect:    ");
+		strcpy(s, " Aspect:     ");
 		tos_set_ar(get_ar_name(tos_get_ar(), s));
-		OsdWrite(m++, s, menusub == 9);
+		OsdWrite(m++, s, menusub == 8);
 
-		strcpy(s, " Screen:    ");
+		strcpy(s, " Screen:     ");
 		if (tos_system_ctrl() & TOS_CONTROL_VIDEO_COLOR) strcat(s, "Color");
 		else                                             strcat(s, "Mono");
-		OsdWrite(m++, s, menusub == 10);
+		OsdWrite(m++, s, menusub == 9);
 
-		strcpy(s, " Mono 60Hz: ");
+		strcpy(s, " Mono 60Hz:  ");
 		if (tos_system_ctrl() & TOS_CONTROL_MDE60) strcat(s, "On");
 		else                                       strcat(s, "Off");
-		OsdWrite(m++, s, menusub == 11);
+		OsdWrite(m++, s, menusub == 10);
 
 		strcpy(s, " Video Crop: ");
 		if (tos_system_ctrl() & TOS_CONTROL_BORDER) strcat(s, (tos_get_extctrl() & 0x400) ? "Visible 216p(5x)" : "Visible");
 		else                                        strcat(s, "Full");
-		OsdWrite(m++, s, menusub == 12);
+		OsdWrite(m++, s, menusub == 11);
 
 		strcpy(s, " Scale:      ");
 		strcat(s, config_scale[(tos_get_extctrl() >> 11) & 3]);
-		OsdWrite(m++, s, menusub == 13);
+		OsdWrite(m++, s, menusub == 12);
 
 		strcpy(s, " Scanlines:  ");
 		strcat(s, tos_scanlines[(tos_system_ctrl() >> 20) & 3]);
+		OsdWrite(m++, s, menusub == 13);
+
+		strcpy(s, " YM-Audio:   ");
+		strcat(s, tos_stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
 		OsdWrite(m++, s, menusub == 14);
 
-		strcpy(s, " YM-Audio:  ");
-		strcat(s, tos_stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
-		OsdWrite(m++, s, menusub == 15);
-
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(16, STD_EXIT, menusub == 16);
+		OsdWrite(15, STD_BACK, menusub == 15);
 
 		parentstate = menustate;
 		menustate = MENU_ST_SYSTEM2;
@@ -3844,7 +3864,7 @@ void HandleUI(void)
 		else if (back || left)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 5;
+			menusub = 4;
 			if (need_reset)
 			{
 				tos_reset(1);
@@ -3863,22 +3883,22 @@ void HandleUI(void)
 				else if (recent_init(menusub + 500)) menustate = MENU_RECENT1;
 			}
 			else
+			{
+				if (tos_cartridge_is_inserted())
 				{
-					if (tos_cartridge_is_inserted())
-					{
-						tos_load_cartridge("");
-						menustate = MENU_ST_SYSTEM1;
-					}
-					else
-					{
+					tos_load_cartridge("");
+					menustate = MENU_ST_SYSTEM1;
+				}
+				else
+				{
 					fs_Options = SCANO_DIR;
 					fs_MenuSelect = MENU_ST_SYSTEM_FILE_SELECTED;
 					fs_MenuCancel = MENU_ST_SYSTEM1;
 					strcpy(fs_pFileExt, "IMG");
 					if (select) SelectFile(Selected_F[menusub], "IMG", fs_Options, fs_MenuSelect, fs_MenuCancel);
 					else if (recent_init(menusub)) menustate = MENU_RECENT1;
-					}
 				}
+			}
 
 		}
 		else if (select || plus || minus)
@@ -3886,23 +3906,6 @@ void HandleUI(void)
 			switch (menusub)
 			{
 			case 3:
-				switch (tos_get_db9type())
-				{
-				case 0:
-					tos_set_db9type(2);
-					break;
-				case 5:
-					tos_set_db9type(1);
-					break;
-				default:
-					tos_set_db9type(tos_get_db9type() + 1);
-					break;
-				}
-				tos_send_fpga_db9type();
-				menustate = MENU_ST_SYSTEM1;
-				break;
-
-			case 4:
 				{
 					// RAM
 					int mem = (tos_system_ctrl() >> 1) & 7;   // current memory config
@@ -3922,11 +3925,11 @@ void HandleUI(void)
 				}
 				break;
 
-			case 5:  // TOS
+			case 4:  // TOS
 				if (select) SelectFile(Selected_F[menusub], "IMG", SCANO_DIR, MENU_ST_SYSTEM_FILE_SELECTED, MENU_ST_SYSTEM1);
 				break;
 
-			case 6:
+			case 5:
 				{
 					int chipset = (((tos_system_ctrl() >> 23) + (minus ? -1 : 1)) & 3);
 					tos_update_sysctrl((tos_system_ctrl() & ~(TOS_CONTROL_STE | TOS_CONTROL_MSTE)) | (chipset << 23));
@@ -3934,7 +3937,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 7:
+			case 6:
 				if (!(tos_system_ctrl() & TOS_CONTROL_STE))
 				{
 					tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_BLITTER);
@@ -3942,29 +3945,29 @@ void HandleUI(void)
 				}
 				break;
 
-			case 8:
+			case 7:
 				// viking/sm194
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_VIKING);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 9:
+			case 8:
 				tos_set_ar(next_ar(tos_get_ar(), minus));
 				tos_update_sysctrl(tos_system_ctrl());
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 10:
+			case 9:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_VIDEO_COLOR);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 11:
+			case 10:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_MDE60);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 12:
+			case 11:
 				{
 					int mode = ((tos_system_ctrl() & TOS_CONTROL_BORDER) ? 1 : 0) | ((tos_get_extctrl() & 0x400) ? 2 : 0);
 					if (minus)
@@ -3982,7 +3985,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 13:
+			case 12:
 				{
 					int mode = ((tos_get_extctrl() >> 11) + (minus ? -1 : 1)) & 3;
 					tos_set_extctrl((tos_get_extctrl() & ~0x1800) | (mode << 11));
@@ -3990,7 +3993,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 14:
+			case 13:
 				{
 					// next scanline state
 					int scan = ((tos_system_ctrl() >> 20) + (minus ? -1 : 1)) & 3;
@@ -3999,12 +4002,13 @@ void HandleUI(void)
 				}
 				break;
 
-			case 15:
+			case 14:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_STEREO);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 16:
+
+			case 15:
 				menustate = MENU_ST_MAIN1;
 				menusub = 4;
 				if (need_reset)
@@ -4026,7 +4030,7 @@ void HandleUI(void)
 		break;
 
 	case MENU_ST_SYSTEM_FILE_SELECTED: // file successfully selected
-		if (menusub == 5)
+		if (menusub == 4)
 		{
 			memcpy(Selected_F[menusub], selPath, sizeof(Selected_F[menusub]));
 			tos_upload(selPath);
@@ -4068,7 +4072,7 @@ void HandleUI(void)
 		}
 
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 9, 0);
+		OsdWrite(15, STD_BACK, menusub == 9, 0);
 
 		menustate = MENU_ST_LOAD_CONFIG2;
 		break;
@@ -4077,7 +4081,7 @@ void HandleUI(void)
 		if (menu || left)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 6;
+			menusub = 5;
 		}
 
 		if (select)
@@ -4091,7 +4095,7 @@ void HandleUI(void)
 			else
 			{
 				menustate = MENU_ST_MAIN1;
-				menusub = 6;
+				menusub = 5;
 			}
 		}
 		break;
@@ -4118,7 +4122,7 @@ void HandleUI(void)
 		}
 
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(15, STD_EXIT, menusub == 9, 0);
+		OsdWrite(15, STD_BACK, menusub == 9, 0);
 
 		menustate = MENU_ST_SAVE_CONFIG2;
 		break;
@@ -4127,7 +4131,7 @@ void HandleUI(void)
 		if (menu || left)
 		{
 			menustate = MENU_ST_MAIN1;
-			menusub = 7;
+			menusub = 6;
 		}
 
 		if (select)
@@ -4140,7 +4144,7 @@ void HandleUI(void)
 			else
 			{
 				menustate = MENU_ST_MAIN1;
-				menusub = 7;
+				menusub = 6;
 			}
 		}
 		break;
@@ -4249,7 +4253,7 @@ void HandleUI(void)
 			OsdWrite(m++, " Reset Hanging Notes", menusub == 5);
 
 			while (m < 15) OsdWrite(m++);
-			OsdWrite(15, STD_EXIT, menusub == 6, 0);
+			OsdWrite(15, STD_BACK, menusub == 6, 0);
 
 			menustate = MENU_MT32PI_MAIN2;
 		}
@@ -4257,12 +4261,12 @@ void HandleUI(void)
 
 
 	case MENU_MT32PI_MAIN2:
-		if (menu || back || left)
+		if (menu || back || left || (select && menusub == 6))
 		{
 			if (is_minimig())
 			{
 				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 10;
+				menusub = 8;
 			}
 			else
 			{
@@ -4325,10 +4329,6 @@ void HandleUI(void)
 					menustate = MENU_MT32PI_MAIN1;
 				}
 				break;
-
-			case 6:
-				if (select) menustate = MENU_NONE1;
-				break;
 			}
 
 			if (is_minimig()) minimig_set_extcfg(mt32_cfg);
@@ -4340,313 +4340,11 @@ void HandleUI(void)
 		}
 		break;
 
-
-		/******************************************************************/
-		/* minimig main menu                                              */
-		/******************************************************************/
-	case MENU_MINIMIG_MAIN1:
-		menumask = 0x3DF0;	// b01110000 Floppy turbo, Harddisk options & Exit.
-		OsdSetTitle("Minimig", OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
-		helptext_idx = HELPTEXT_MAIN;
-
-		// floppy drive info
-		// We display a line for each drive that's active
-		// in the config file, but grey out any that the FPGA doesn't think are active.
-		// We also print a help text in place of the last drive if it's inactive.
-		for (int i = 0; i < 4; i++)
-		{
-			if (i == minimig_config.floppy.drives + 1) OsdWrite(i, " KP +/- to add/remove drives", 0, 1);
-			else
-			{
-				strcpy(s, " dfx: ");
-				s[3] = i + '0';
-				if (i <= drives)
-				{
-					menumask |= (1 << i);	// Make enabled drives selectable
-
-					if (df[i].status & DSK_INSERTED) // floppy disk is inserted
-					{
-						char *p;
-						if ((p = strrchr(df[i].name, '/')))
-						{
-							p++;
-						}
-						else
-						{
-							p = df[i].name;
-						}
-
-						int len = strlen(p);
-						if (len > 22) len = 21;
-						strncpy(&s[6], p, len);
-						s[6 + len] = ' ';
-						s[6 + len + 1] = 0;
-						s[6 + len + 2] = 0;
-						if (!(df[i].status & DSK_WRITABLE)) s[6 + len + 1] = '\x17'; // padlock icon for write-protected disks
-					}
-					else // no floppy disk
-					{
-						strcat(s, "* no disk *");
-					}
-				}
-				else if (i <= minimig_config.floppy.drives)
-				{
-					strcat(s, "* active after reset *");
-				}
-				else
-					strcpy(s, "");
-				OsdWrite(i, s, menusub == (uint32_t)i, (i>drives) || (i>minimig_config.floppy.drives));
-			}
-		}
-
-		m = 3;
-		sprintf(s, " Floppy disk turbo : %s", minimig_config.floppy.speed ? "on" : "off");
-		OsdWrite(m++, s, menusub == 4, 0);
-
-		// Added DB9 menus INIT
-		if (minimig_config.db9type == 0) minimig_config.db9type =1;
-		sprintf(s, " UserIO Joys: ");
-		strcat(s, config_db9type_msg[minimig_config.db9type & 7]);
-		OsdWrite(m++, s, menusub == 5, 0);
-		// Added DB9 menus END
-
-		OsdWrite(m++);
-		OsdWrite(m++, " Hard disks                \x16", menusub == 6, 0);
-		OsdWrite(m++, " CPU & Chipset             \x16", menusub == 7, 0);
-		OsdWrite(m++, " Memory                    \x16", menusub == 8, 0);
-		OsdWrite(m++, " Audio & Video             \x16", menusub == 9, 0);
-		//if (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 1)
-		{
-			menumask |= 0x200;
-			OsdWrite(m++, " MT32-pi                   \x16", menusub == 10);
-		}
-
-		OsdWrite(m++);
-		OsdWrite(m++, " Save configuration        \x16", menusub == 11, 0);
-		OsdWrite(m++, " Load configuration        \x16", menusub == 12, 0);
-
-		while (m < 14) OsdWrite(m++);
-		OsdWrite(m++, " Reset", menusub == 13, 0);
-
-		OsdWrite(15, STD_EXIT, menusub == 14, 0);
-
-		menustate = MENU_MINIMIG_MAIN2;
-		parentstate = MENU_MINIMIG_MAIN1;
-		break;
-
-	case MENU_MINIMIG_MAIN2:
-		if (menu) menustate = MENU_NONE1;
-		else if (plus && (minimig_config.floppy.drives<3) && menusub < 4)
-		{
-			minimig_config.floppy.drives++;
-			minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
-			menustate = MENU_MINIMIG_MAIN1;
-		}
-		else if (minus && (minimig_config.floppy.drives>0) && menusub < 4)
-		{
-			minimig_config.floppy.drives--;
-			minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
-			menustate = MENU_MINIMIG_MAIN1;
-		}
-		else if (select || recent || minus || plus)
-		{
-			if (menusub < 4)
-			{
-				ioctl_index = 0;
-				if (df[menusub].status & DSK_INSERTED) // eject selected floppy
-				{
-					df[menusub].status = 0;
-					FileClose(&df[menusub].file);
-					menustate = MENU_MINIMIG_MAIN1;
-				}
-				else
-				{
-					df[menusub].status = 0;
-					fs_Options = SCANO_DIR;
-					fs_MenuSelect = MENU_MINIMIG_ADFFILE_SELECTED;
-					fs_MenuCancel = MENU_MINIMIG_MAIN1;
-					strcpy(fs_pFileExt, "ADF");
-					if(select) SelectFile(Selected_F[menusub], "ADF", fs_Options, fs_MenuSelect, fs_MenuCancel);
-					else if (recent_init(0)) menustate = MENU_RECENT1;
-				}
-			}
-			else if (menusub == 4 && !recent)	// Toggle floppy turbo
-			{
-				minimig_config.floppy.speed ^= 1;
-				minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
-				menustate = MENU_MINIMIG_MAIN1;
-			}
-			else if (select)
-			{
-				if (menusub == 4)	// Toggle floppy turbo
-				{
-					minimig_config.floppy.speed ^= 1;
-					minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
-					menustate = MENU_MINIMIG_MAIN1;
-				}
-
-				// Added DB9 menus INIT
-				else if (menusub == 5)	// DB9 Options
-				{
-					if 	(minimig_config.db9type == 0) {
-						 minimig_config.db9type = 2;
-					} else if (minimig_config.db9type == 5) {
-						minimig_config.db9type = 1 ;
-					} else {
-						minimig_config.db9type = minimig_config.db9type + 1 ;
-					}
-					minimig_ConfigDB9Type(minimig_config.db9type);
-					menustate = MENU_MINIMIG_MAIN1;	
-				}
-				// Added DB9 menus END
-
-				else if (menusub == 6)	// Go to harddrives page.
-				{
-					menustate = MENU_MINIMIG_HARDFILE1;
-					menusub = 0;
-				}
-				else if (menusub == 7)
-				{
-					menustate = MENU_MINIMIG_CHIPSET1;
-					menusub = 0;
-				}
-				else if (menusub == 8)
-				{
-					menustate = MENU_MINIMIG_MEMORY1;
-					menusub = 0;
-				}
-				else if (menusub == 9)
-				{
-					menustate = MENU_MINIMIG_VIDEO1;
-					menusub = 0;
-				}
-				else if (menusub == 10)
-				{
-					menusub = 0;
-					menustate = MENU_MT32PI_MAIN1;
-				}
-				else if (menusub == 11)
-				{
-					menusub = 0;
-					menustate = MENU_MINIMIG_SAVECONFIG1;
-				}
-				else if (menusub == 12)
-				{
-					menusub = 0;
-					menustate = MENU_MINIMIG_LOADCONFIG1;
-				}
-				else if (menusub == 13)
-				{
-					menustate = MENU_NONE1;
-					minimig_reset();
-				}
-				else if (menusub == 14)
-				{
-					menustate = MENU_NONE1;
-				}
-			}
-		}
-		else if (c == KEY_BACKSPACE) // eject all floppies
-		{
-			for (int i = 0; i <= drives; i++) df[i].status = 0;
-			menustate = MENU_MINIMIG_MAIN1;
-		}
-		else if (right)
-		{
-			menustate = MENU_COMMON1;
-			menusub = 0;
-		}
-		else if (left)
-		{
-			menustate = MENU_MISC1;
-			menusub = 3;
-		}
-		break;
-
-	case MENU_MINIMIG_ADFFILE_SELECTED:
-		memcpy(Selected_F[menusub], selPath, sizeof(Selected_F[menusub]));
-		recent_update(SelectedDir, selPath, SelectedLabel, 0);
-		InsertFloppy(&df[menusub], selPath);
-		if (menusub < drives) menusub++;
-		menustate = MENU_MINIMIG_MAIN1;
-		break;
-
-	case MENU_MINIMIG_LOADCONFIG1:
-		helptext_idx = 0;
-		if (parentstate != menustate) menumask = 0x400;
-
-		parentstate = menustate;
-		OsdSetTitle("Load config", 0);
-
-		m = 0;
-		OsdWrite(m++, "", 0, 0);
-		OsdWrite(m++, " Startup config:");
-		for (uint i = 0; i < 10; i++)
-		{
-			const char *info = minimig_get_cfg_info(i, menusub != i);
-			static char name[128];
-
-			if (info)
-			{
-				menumask |= 1 << i;
-				sprintf(name, "  %s", strlen(info) ? info : "NO INFO");
-				char *p = strchr(name, '\n');
-				if (p) *p = 0;
-				OsdWrite(m++, name, menusub == i);
-
-				if (menusub == i && p)
-				{
-					sprintf(name, "  %s", strchr(info, '\n') + 1);
-					OsdWrite(m++, name, 1, !(menumask & (1 << i)));
-				}
-			}
-
-			if (!i)
-			{
-				OsdWrite(m++, "", 0, 0);
-				m = 4;
-				OsdWrite(m++, " Other configs:");
-			}
-		}
-
-		while(m < OsdGetSize() - 1) OsdWrite(m++);
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 10, 0);
-
-		menustate = MENU_MINIMIG_LOADCONFIG2;
-		break;
-
-	case MENU_MINIMIG_LOADCONFIG2:
-		if (down)
-		{
-			if (menusub < 9) menusub++;
-			menustate = MENU_MINIMIG_LOADCONFIG1;
-		}
-		else if (select)
-		{
-			if (menusub<10)
-			{
-				OsdDisable();
-				minimig_cfg_load(menusub);
-				menustate = MENU_NONE1;
-			}
-			else
-			{
-				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 10;
-			}
-		}
-		if (menu || left) // exit menu
-		{
-			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 10;
-		}
-		break;
-
 		/******************************************************************/
 		/* file selection menu                                            */
 		/******************************************************************/
 	case MENU_FILE_SELECT1:
-		helptext_idx = (fs_Options & SCANO_UMOUNT) ? HELPTEXT_EJECT : 0;
+		helptext_idx = (fs_Options & SCANO_UMOUNT) ? HELPTEXT_EJECT : (fs_Options & SCANO_CLEAR) ? HELPTEXT_CLEAR : 0;
 		OsdSetTitle((fs_Options & SCANO_CORES) ? "Cores" : "Select", 0);
 		PrintDirectory(hold_cnt<2);
 		menustate = MENU_FILE_SELECT2;
@@ -4655,12 +4353,25 @@ void HandleUI(void)
 	case MENU_FILE_SELECT2:
 		menumask = 0;
 
-		if (c == KEY_BACKSPACE && (fs_Options & SCANO_UMOUNT) && !strlen(filter))
+		if (c == KEY_BACKSPACE && (fs_Options & (SCANO_UMOUNT | SCANO_CLEAR)) && !strlen(filter))
 		{
 			for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i, "", 0, 0);
-			OsdWrite(OsdGetSize() / 2, "   Unmounting the image", 0, 0);
-			OsdUpdate();
-			sleep(1);
+			if (fs_Options & SCANO_CLEAR)
+			{
+				int i = (OsdGetSize() / 2) - 2;
+				OsdWrite(i++, "     Clearing the option");
+				OsdWrite(i++);
+				OsdWrite(i++, " You have to reload the core");
+				OsdWrite(i++, "    to use default value.");
+				OsdUpdate();
+				sleep(2);
+			}
+			else
+			{
+				OsdWrite(OsdGetSize() / 2, "    Unmounting the image", 0, 0);
+				OsdUpdate();
+				sleep(1);
+			}
 			input_poll(0);
 			menu_key_set(0);
 			selPath[0] = 0;
@@ -4760,7 +4471,7 @@ void HandleUI(void)
 						// call "clears" the filter, the second one scrolls to
 						// the right place in the list
 						ScanDirectory(selPath, SCANF_INIT, fs_pFileExt, fs_Options);
-					ScanDirectory(selPath, i, fs_pFileExt, fs_Options);
+						ScanDirectory(selPath, i, fs_pFileExt, fs_Options);
 					}
 					else if (filter_len < 255)
 					{
@@ -4946,13 +4657,9 @@ void HandleUI(void)
 
 		if (c == KEY_BACKSPACE)
 		{
-			for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i, "", 0, 0);
-			OsdWrite(OsdGetSize() / 2, "    Clearing the recents", 0, 0);
-			OsdUpdate();
-			sleep(1);
-			recent_clear((fs_Options & SCANO_CORES) ? -1 : (fs_Options & SCANO_UMOUNT) ? ioctl_index + 500 : ioctl_index);
-			menustate = fs_MenuCancel;
-			if (is_menu()) menustate = MENU_FILE_SELECT1;
+			menusub_last = menusub;
+			menusub = 0;
+			menustate = MENU_RECENT3;
 			break;
 		}
 
@@ -4971,6 +4678,45 @@ void HandleUI(void)
 		if (select)
 		{
 			menustate = recent_select(SelectedDir, selPath, SelectedLabel) ? (enum MENU)fs_MenuSelect : MENU_RECENT1;
+		}
+		break;
+
+	case MENU_RECENT3:
+		menumask = 0x03;
+		parentstate = menustate;
+		m = 0;
+		OsdWrite(m++);
+		OsdWrite(m++);
+		OsdWrite(m++);
+		OsdWrite(m++);
+		OsdWrite(m++);
+		OsdWrite(m++);
+		OsdWrite(m++, "        Clear the List?");
+		OsdWrite(m++);
+		OsdWrite(m++, "             No", menusub == 0);
+		OsdWrite(m++, "             Yes", menusub == 1);
+		while(m < OsdGetSize()) OsdWrite(m++);
+		menustate = MENU_RECENT4;
+		break;
+
+	case MENU_RECENT4:
+		if (select && menusub == 1)
+		{
+			for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i, "", 0, 0);
+			OsdWrite(OsdGetSize() / 2, "    Clearing the recents", 0, 0);
+			OsdUpdate();
+			sleep(1);
+			recent_clear((fs_Options & SCANO_CORES) ? -1 : (fs_Options & SCANO_UMOUNT) ? ioctl_index + 500 : ioctl_index);
+			menustate = fs_MenuCancel;
+			menusub = menusub_last;
+			if (is_menu()) menustate = MENU_FILE_SELECT1;
+
+		}
+		else if (select || menu || back)
+		{
+			menustate = fs_MenuCancel;
+			menusub = menusub_last;
+			if (is_menu()) menustate = MENU_FILE_SELECT1;
 		}
 		break;
 
@@ -5021,15 +4767,18 @@ void HandleUI(void)
 				printf("Saving config to %s\n", filename);
 				FileSaveConfig(filename, status, 8);
 				menustate = MENU_GENERIC_MAIN1;
-				if (arcade_sw()->dip_num)
+				for (int n = 0; n < 2; n++)
 				{
-					arcade_sw()->dip_cur = arcade_sw()->dip_def;
-					arcade_sw_send();
-					arcade_sw_save();
-					user_io_8bit_set_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
-					user_io_8bit_set_status(0, UIO_STATUS_RESET);
-					menustate = MENU_NONE1;
+					if (arcade_sw(n)->dip_num)
+					{
+						arcade_sw(n)->dip_cur = arcade_sw(n)->dip_def;
+						arcade_sw_send(n);
+						user_io_8bit_set_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
+						user_io_8bit_set_status(0, UIO_STATUS_RESET);
+						arcade_sw_save(n);
+					}
 				}
+				menustate = MENU_NONE1;
 				menusub = 0;
 			}
 		}
@@ -5038,6 +4787,281 @@ void HandleUI(void)
 		{
 			menustate = MENU_COMMON1;
 			menusub = 11;
+		}
+		break;
+
+		/******************************************************************/
+		/* minimig main menu                                              */
+		/******************************************************************/
+	case MENU_MINIMIG_MAIN1:
+		menumask = 0x1EF0;
+		OsdSetTitle("Minimig", OSD_ARROW_RIGHT | OSD_ARROW_LEFT);
+		helptext_idx = HELPTEXT_MAIN;
+
+		while (1)
+		{
+			if (!menusub) firstmenu = 0;
+			adjvisible = 0;
+			// floppy drive info
+			// We display a line for each drive that's active
+			// in the config file, but grey out any that the FPGA doesn't think are active.
+			// We also print a help text in place of the last drive if it's inactive.
+			for (int i = 0; i < 4; i++)
+			{
+				if (i == minimig_config.floppy.drives + 1) MenuWrite(i, " KP +/- to add/remove drives", 0, 1);
+				else
+				{
+					strcpy(s, " dfx: ");
+					s[3] = i + '0';
+					if (i <= drives)
+					{
+						menumask |= (1 << i);	// Make enabled drives selectable
+
+						if (df[i].status & DSK_INSERTED) // floppy disk is inserted
+						{
+							char *p;
+							if ((p = strrchr(df[i].name, '/')))
+							{
+								p++;
+							}
+							else
+							{
+								p = df[i].name;
+							}
+
+							int len = strlen(p);
+							if (len > 22) len = 21;
+							strncpy(&s[6], p, len);
+							s[6 + len] = ' ';
+							s[6 + len + 1] = 0;
+							s[6 + len + 2] = 0;
+							if (!(df[i].status & DSK_WRITABLE)) s[6 + len + 1] = '\x17'; // padlock icon for write-protected disks
+						}
+						else // no floppy disk
+						{
+							strcat(s, "* no disk *");
+						}
+					}
+					else if (i <= minimig_config.floppy.drives)
+					{
+						strcat(s, "* active after reset *");
+					}
+					else
+						strcpy(s, "");
+					MenuWrite(i, s, menusub == (uint32_t)i, (i > drives) || (i > minimig_config.floppy.drives));
+				}
+			}
+
+			m = 4;
+			strcpy(s,      " Joystick Swap:          ");
+			strcat(s, (minimig_config.autofire & 0x8) ? " ON" : "OFF");
+			MenuWrite(m++, s, menusub == 4, 0);
+			MenuWrite(m++),
+
+			MenuWrite(m++, " Drives                    \x16", menusub == 5, 0);
+			MenuWrite(m++, " System                    \x16", menusub == 6, 0);
+			MenuWrite(m++, " Audio & Video             \x16", menusub == 7, 0);
+			if (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 1)
+			{
+				menumask |= 0x100;
+				MenuWrite(m++, " MT32-pi                   \x16", menusub == 8);
+			}
+
+			MenuWrite(m++);
+			MenuWrite(m++, " Save configuration        \x16", menusub == 9, 0);
+			MenuWrite(m++, " Load configuration        \x16", menusub == 10, 0);
+
+			while (m < 14) MenuWrite(m++);
+			MenuWrite(m++, " Reset", menusub == 11, 0);
+			MenuWrite(m, STD_EXIT, menusub == 12, 0);
+
+			if (!adjvisible) break;
+			firstmenu += adjvisible;
+		}
+
+		menustate = MENU_MINIMIG_MAIN2;
+		parentstate = MENU_MINIMIG_MAIN1;
+		break;
+
+	case MENU_MINIMIG_MAIN2:
+		if (menu) menustate = MENU_NONE1;
+		else if (plus && (minimig_config.floppy.drives < 3) && menusub < 4)
+		{
+			minimig_config.floppy.drives++;
+			minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
+			menustate = MENU_MINIMIG_MAIN1;
+		}
+		else if (minus && (minimig_config.floppy.drives > 0) && menusub < 4)
+		{
+			minimig_config.floppy.drives--;
+			minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
+			menustate = MENU_MINIMIG_MAIN1;
+		}
+		else if (select || recent || minus || plus)
+		{
+			if (menusub < 4)
+			{
+				ioctl_index = 0;
+				if (df[menusub].status & DSK_INSERTED) // eject selected floppy
+				{
+					df[menusub].status = 0;
+					FileClose(&df[menusub].file);
+					menustate = MENU_MINIMIG_MAIN1;
+				}
+				else
+				{
+					df[menusub].status = 0;
+					fs_Options = SCANO_DIR;
+					fs_MenuSelect = MENU_MINIMIG_ADFFILE_SELECTED;
+					fs_MenuCancel = MENU_MINIMIG_MAIN1;
+					strcpy(fs_pFileExt, "ADF");
+					if (select) SelectFile(Selected_F[menusub], "ADF", fs_Options, fs_MenuSelect, fs_MenuCancel);
+					else if (recent_init(0)) menustate = MENU_RECENT1;
+				}
+			}
+			else if (menusub == 4)
+			{
+				minimig_config.autofire ^= 0x8;
+				menustate = MENU_MINIMIG_CHIPSET1;
+				minimig_ConfigAutofire(minimig_config.autofire, 0x8);
+				menustate = MENU_MINIMIG_MAIN1;
+			}
+			else if (select)
+			{
+				if (menusub == 5)
+				{
+					menustate = MENU_MINIMIG_DISK1;
+					menusub = 0;
+				}
+				else if (menusub == 6)
+				{
+					menustate = MENU_MINIMIG_CHIPSET1;
+					menusub = 0;
+				}
+				else if (menusub == 7)
+				{
+					menustate = MENU_MINIMIG_VIDEO1;
+					menusub = 0;
+				}
+				else if (menusub == 8)
+				{
+					menusub = 0;
+					menustate = MENU_MT32PI_MAIN1;
+				}
+				else if (menusub == 9)
+				{
+					menusub = 0;
+					menustate = MENU_MINIMIG_SAVECONFIG1;
+				}
+				else if (menusub == 10)
+				{
+					menusub = 0;
+					menustate = MENU_MINIMIG_LOADCONFIG1;
+				}
+				else if (menusub == 11)
+				{
+					menustate = MENU_NONE1;
+					minimig_reset();
+				}
+				else if (menusub == 12)
+				{
+					menustate = MENU_NONE1;
+				}
+			}
+		}
+		else if (c == KEY_BACKSPACE) // eject all floppies
+		{
+			for (int i = 0; i <= drives; i++) df[i].status = 0;
+			menustate = MENU_MINIMIG_MAIN1;
+		}
+		else if (right)
+		{
+			menustate = MENU_COMMON1;
+			menusub = 0;
+		}
+		else if (left)
+		{
+			menustate = MENU_MISC1;
+			menusub = 3;
+		}
+		break;
+
+	case MENU_MINIMIG_ADFFILE_SELECTED:
+		memcpy(Selected_F[menusub], selPath, sizeof(Selected_F[menusub]));
+		recent_update(SelectedDir, selPath, SelectedLabel, 0);
+		InsertFloppy(&df[menusub], selPath);
+		if (menusub < drives) menusub++;
+		menustate = MENU_MINIMIG_MAIN1;
+		break;
+
+	case MENU_MINIMIG_LOADCONFIG1:
+		helptext_idx = 0;
+		if (parentstate != menustate) menumask = 0x400;
+
+		parentstate = menustate;
+		OsdSetTitle("Load config", 0);
+
+		m = 0;
+		OsdWrite(m++, "", 0, 0);
+		OsdWrite(m++, " Startup config:");
+		for (uint i = 0; i < 10; i++)
+		{
+			const char *info = minimig_get_cfg_info(i, menusub != i);
+			static char name[128];
+
+			if (info)
+			{
+				menumask |= 1 << i;
+				sprintf(name, "  %s", strlen(info) ? info : "NO INFO");
+				char *p = strchr(name, '\n');
+				if (p) *p = 0;
+				OsdWrite(m++, name, menusub == i);
+
+				if (menusub == i && p)
+				{
+					sprintf(name, "  %s", strchr(info, '\n') + 1);
+					OsdWrite(m++, name, 1, !(menumask & (1 << i)));
+				}
+			}
+
+			if (!i)
+			{
+				OsdWrite(m++, "", 0, 0);
+				m = 4;
+				OsdWrite(m++, " Other configs:");
+			}
+		}
+
+		while (m < OsdGetSize() - 1) OsdWrite(m++);
+		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 10, 0);
+
+		menustate = MENU_MINIMIG_LOADCONFIG2;
+		break;
+
+	case MENU_MINIMIG_LOADCONFIG2:
+		if (down)
+		{
+			if (menusub < 9) menusub++;
+			menustate = MENU_MINIMIG_LOADCONFIG1;
+		}
+		else if (select)
+		{
+			if (menusub < 10)
+			{
+				OsdDisable();
+				minimig_cfg_load(menusub);
+				menustate = MENU_NONE1;
+			}
+			else
+			{
+				menustate = MENU_MINIMIG_MAIN1;
+				menusub = 10;
+			}
+		}
+		if (menu || left)
+		{
+			menustate = MENU_MINIMIG_MAIN1;
+			menusub = 10;
 		}
 		break;
 
@@ -5081,7 +5105,7 @@ void HandleUI(void)
 		}
 
 		while (m < OsdGetSize() - 1) OsdWrite(m++);
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 10, 0);
+		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 10, 0);
 
 		menustate = MENU_MINIMIG_SAVECONFIG2;
 		break;
@@ -5090,7 +5114,7 @@ void HandleUI(void)
 		if (select)
 		{
 			int fastcfg = ((minimig_config.memory >> 4) & 0x03) | ((minimig_config.memory & 0x80) >> 5);
-			sprintf(minimig_config.info, "%s/%s/%s%s %s%s%s%s%s%s/%s\n",
+			sprintf(minimig_config.info, "%s/%s/%s%s %s%s%s%s%s%s\n",
 				config_cpu_msg[minimig_config.cpu & 0x03] + 2,
 				config_chipset_msg[(minimig_config.chipset >> 2) & 7],
 				minimig_config.chipset & CONFIG_NTSC ? "N" : "P",
@@ -5103,8 +5127,7 @@ void HandleUI(void)
 				fastcfg ? config_memory_fast_msg[(minimig_config.cpu>>1) & 1][fastcfg] : "",
 				((minimig_config.memory >> 2) & 0x03) ? "+" : "",
 				((minimig_config.memory >> 2) & 0x03) ? config_memory_slow_msg[(minimig_config.memory >> 2) & 0x03] : "",
-				(minimig_config.memory & 0x40) ? " HRT" : "",
-				config_db9type_msg[minimig_config.db9type & 7]  // 8 bytes							
+				(minimig_config.memory & 0x40) ? " HRT" : ""
 			);
 
 			char *p = strrchr(minimig_config.kickstart, '/');
@@ -5126,42 +5149,49 @@ void HandleUI(void)
 		}
 		break;
 
-		/******************************************************************/
-		/* chipset settings menu                                          */
-		/******************************************************************/
 	case MENU_MINIMIG_CHIPSET1:
 		helptext_idx = HELPTEXT_CHIPSET;
-		menumask = 0xf9;
-		OsdSetTitle("Chipset", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
+		menumask = 0x3FF;
+		OsdSetTitle("System");
 		parentstate = menustate;
 
 		m = 0;
 		OsdWrite(m++, "", 0, 0);
-		strcpy(s, " CPU            : ");
+		strcpy(s, " CPU      : ");
 		strcat(s, config_cpu_msg[minimig_config.cpu & 0x03]);
 		OsdWrite(m++, s, menusub == 0, 0);
-		//strcpy(s, " Cache ChipRAM  : ");
-		//strcat(s, (minimig_config.cpu & 4) ? "ON" : "OFF");
-		//OsdWrite(m++, s, menusub == 1, !(minimig_config.cpu & 0x2));
-		//strcpy(s, " Cache Kickstart: ");
-		//strcat(s, (minimig_config.cpu & 8) ? "ON" : "OFF");
-		//OsdWrite(m++, s, menusub == 2, !(minimig_config.cpu & 0x2));
-		strcpy(s, " D-Cache        : ");
+		strcpy(s, " D-Cache  : ");
 		strcat(s, (minimig_config.cpu & 16) ? "ON" : "OFF");
-		OsdWrite(m++, s, menusub == 3, !(minimig_config.cpu & 0x2));
+		OsdWrite(m++, s, menusub == 1, !(minimig_config.cpu & 0x2));
 		OsdWrite(m++, "", 0, 0);
-		strcpy(s, " Chipset        : ");
+		strcpy(s, " Chipset  : ");
 		strcat(s, config_chipset_msg[(minimig_config.chipset >> 2) & 7]);
+		OsdWrite(m++, s, menusub == 2, 0);
+		strcpy(s, " ChipRAM  : ");
+		strcat(s, config_memory_chip_msg[minimig_config.memory & 0x03]);
+		OsdWrite(m++, s, menusub == 3, 0);
+		strcpy(s, " FastRAM  : ");
+		strcat(s, config_memory_fast_msg[(minimig_config.cpu >> 1) & 1][((minimig_config.memory >> 4) & 0x03) | ((minimig_config.memory & 0x80) >> 5)]);
 		OsdWrite(m++, s, menusub == 4, 0);
-		OsdWrite(m++, "", 0, 0);
-		strcpy(s, " CD32 Pad       : ");
-		strcat(s, config_cd32pad_msg[(minimig_config.autofire >> 2) & 1]);
+		strcpy(s, " SlowRAM  : ");
+		strcat(s, config_memory_slow_msg[(minimig_config.memory >> 2) & 0x03]);
 		OsdWrite(m++, s, menusub == 5, 0);
-		strcpy(s, " Joystick Swap  : ");
-		strcat(s, (minimig_config.autofire & 0x8)? "ON" : "OFF");
+
+		OsdWrite(m++, "", 0, 0);
+		strcpy(s, " CD32 Pad : ");
+		strcat(s, config_cd32pad_msg[(minimig_config.autofire >> 2) & 1]);
 		OsdWrite(m++, s, menusub == 6, 0);
+
+		OsdWrite(m++, "", 0, 0);
+		strcpy(s, " ROM    : ");
+		strncat(s, minimig_config.kickstart, 24);
+		OsdWrite(m++, s, menusub == 7, 0);
+		strcpy(s, " HRTmon : ");
+		strcat(s, (minimig_config.memory & 0x40) ? "enabled " : "disabled");
+		OsdWrite(m++, s, menusub == 8, 0);
+
 		for (int i = m; i < OsdGetSize() - 1; i++) OsdWrite(i, "", 0, 0);
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 7, 0);
+		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 9, 0);
 
 		menustate = MENU_MINIMIG_CHIPSET2;
 		break;
@@ -5177,6 +5207,7 @@ void HandleUI(void)
 				minimig_config.cpu = (minimig_config.cpu & 0xfc) | ((minimig_config.cpu & 1) ? 0 : 3);
 				minimig_ConfigCPU(minimig_config.cpu);
 			}
+			/*
 			else if (menusub == 1 && (minimig_config.cpu & 0x2))
 			{
 				menustate = MENU_MINIMIG_CHIPSET1;
@@ -5189,13 +5220,14 @@ void HandleUI(void)
 				minimig_config.cpu ^= 8;
 				minimig_ConfigCPU(minimig_config.cpu);
 			}
-			else if (menusub == 3 && (minimig_config.cpu & 0x2))
+			*/
+			else if (menusub == 1 && (minimig_config.cpu & 0x2))
 			{
 				menustate = MENU_MINIMIG_CHIPSET1;
 				minimig_config.cpu ^= 16;
 				minimig_ConfigCPU(minimig_config.cpu);
 			}
-			else if (menusub == 4)
+			else if (menusub == 2)
 			{
 				if (minus)
 				{
@@ -5237,83 +5269,12 @@ void HandleUI(void)
 				menustate = MENU_MINIMIG_CHIPSET1;
 				minimig_ConfigChipset(minimig_config.chipset);
 			}
-			else if (menusub == 5)
-			{
-				minimig_config.autofire ^= 0x4;
-				menustate = MENU_MINIMIG_CHIPSET1;
-				minimig_ConfigAutofire(minimig_config.autofire, 0x4);
-			}
-			else if (menusub == 6)
-			{
-				minimig_config.autofire ^= 0x8;
-				menustate = MENU_MINIMIG_CHIPSET1;
-				minimig_ConfigAutofire(minimig_config.autofire, 0x8);
-			}
-			else if (menusub == 7)
-			{
-				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 7;
-			}
-		}
-
-		if (menu)
-		{
-			menustate = MENU_NONE1;
-		}
-		else if (back || left)
-		{
-			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 7;
-		}
-		break;
-
-		/******************************************************************/
-		/* memory settings menu                                           */
-		/******************************************************************/
-	case MENU_MINIMIG_MEMORY1:
-		helptext_idx = HELPTEXT_MEMORY;
-		menumask = 0x3f;
-		parentstate = menustate;
-
-		OsdSetTitle("Memory", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
-
-		OsdWrite(0, "", 0, 0);
-		strcpy(s, " CHIP   : ");
-		strcat(s, config_memory_chip_msg[minimig_config.memory & 0x03]);
-		OsdWrite(1, s, menusub == 0, 0);
-		strcpy(s, " FAST   : ");
-		strcat(s, config_memory_fast_msg[(minimig_config.cpu>>1) & 1][((minimig_config.memory >> 4) & 0x03) | ((minimig_config.memory&0x80) >> 5)]);
-		OsdWrite(2, s, menusub == 1, 0);
-		strcpy(s, " SLOW   : ");
-		strcat(s, config_memory_slow_msg[(minimig_config.memory >> 2) & 0x03]);
-		OsdWrite(3, s, menusub == 2, 0);
-
-		OsdWrite(4, "", 0, 0);
-
-		strcpy(s, " ROM    : ");
-		strncat(s, minimig_config.kickstart, 24);
-		OsdWrite(5, s, menusub == 3, 0);
-
-		strcpy(s, " HRTmon : ");
-		strcat(s, (minimig_config.memory & 0x40) ? "enabled " : "disabled");
-		OsdWrite(6, s, menusub == 4, 0);
-
-		for (int i = 7; i < OsdGetSize() - 1; i++) OsdWrite(i, "", 0, 0);
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 5, 0);
-
-		menustate = MENU_MINIMIG_MEMORY2;
-		break;
-
-	case MENU_MINIMIG_MEMORY2:
-		saved_menustate = MENU_MINIMIG_MEMORY1;
-		if (select || minus || plus)
-		{
-			if (menusub == 0)
+			else if (menusub == 3)
 			{
 				minimig_config.memory = ((minimig_config.memory + (minus ? -1 : 1)) & 0x03) | (minimig_config.memory & ~0x03);
-				menustate = MENU_MINIMIG_MEMORY1;
+				menustate = MENU_MINIMIG_CHIPSET1;
 			}
-			else if (menusub == 1)
+			else if (menusub == 4)
 			{
 				int c = (((minimig_config.memory >> 4) & 0x03) | ((minimig_config.memory & 0x80) >> 5));
 				if (minus)
@@ -5328,138 +5289,31 @@ void HandleUI(void)
 					if (c > 5) c = 0;
 					if (!(minimig_config.cpu & 2) && c > 3) c = 0;
 				}
-				minimig_config.memory = ((c<<4) & 0x30) | ((c<<5) & 0x80) | (minimig_config.memory & ~0xB0);
-				menustate = MENU_MINIMIG_MEMORY1;
+				minimig_config.memory = ((c << 4) & 0x30) | ((c << 5) & 0x80) | (minimig_config.memory & ~0xB0);
+				menustate = MENU_MINIMIG_CHIPSET1;
 			}
-			else if (menusub == 2)
+			else if (menusub == 5)
 			{
 				minimig_config.memory = ((minimig_config.memory + (minus ? -4 : 4)) & 0x0C) | (minimig_config.memory & ~0x0C);
-				menustate = MENU_MINIMIG_MEMORY1;
+				menustate = MENU_MINIMIG_CHIPSET1;
 			}
-			else if (menusub == 3 && select)
+			else if (menusub == 6)
+			{
+				minimig_config.autofire ^= 0x4;
+				menustate = MENU_MINIMIG_CHIPSET1;
+				minimig_ConfigAutofire(minimig_config.autofire, 0x4);
+			}
+			else if (menusub == 7 && select)
 			{
 				ioctl_index = 1;
-				SelectFile(Selected_F[4], "ROM", 0, MENU_MINIMIG_ROMFILE_SELECTED, MENU_MINIMIG_MEMORY1);
+				SelectFile(Selected_F[4], "ROM", 0, MENU_MINIMIG_ROMFILE_SELECTED, MENU_MINIMIG_CHIPSET1);
 			}
-			else if (menusub == 4)
+			else if (menusub == 8)
 			{
 				minimig_config.memory ^= 0x40;
-				menustate = MENU_MINIMIG_MEMORY1;
+				menustate = MENU_MINIMIG_CHIPSET1;
 			}
-			else if (menusub == 5 && select)
-			{
-				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 8;
-			}
-		}
-
-		if (menu)
-		{
-			menustate = MENU_NONE1;
-		}
-		else if (back || left)
-		{
-			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 8;
-		}
-		break;
-
-	case MENU_MINIMIG_ROMFILE_SELECTED:
-		memcpy(Selected_F[4], selPath, sizeof(Selected_F[4]));
-		minimig_set_kickstart(selPath);
-		menustate = MENU_MINIMIG_MEMORY1;
-		break;
-
-		/******************************************************************/
-		/* hardfile settings menu                                         */
-		/******************************************************************/
-
-		// FIXME!  Nasty race condition here.  Changing HDF type has immediate effect
-		// which could be disastrous if the user's writing to the drive at the time!
-		// Make the menu work on the copy, not the original, and copy on acceptance,
-		// not on rejection.
-	case MENU_MINIMIG_HARDFILE1:
-		helptext_idx = HELPTEXT_HARDFILE;
-		OsdSetTitle("Harddisks", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
-
-		parentstate = menustate;
-		menumask = 0x201;	                      // b001000000001 - On/off & exit enabled by default...
-		if (minimig_config.enable_ide) menumask |= 0xAA;  // b010101010 - HD0/1/2/3 type
-		OsdWrite(0, "", 0, 0);
-		strcpy(s, " A600/A1200 IDE : ");
-		strcat(s, minimig_config.enable_ide ? "On " : "Off");
-		OsdWrite(1, s, menusub == 0, 0);
-		OsdWrite(2, "", 0, 0);
-
-		{
-			uint n = 3, m = 1, t = 4;
-			for (uint i = 0; i < 4; i++)
-			{
-				strcpy(s, (i & 2) ? " Secondary " : " Primary ");
-				strcat(s, (i & 1) ? "Slave: " : "Master: ");
-				strcat(s, minimig_config.hardfile[i].enabled ? "Enabled" : "Disabled");
-				OsdWrite(n++, s, minimig_config.enable_ide ? (menusub == m++) : 0, minimig_config.enable_ide == 0);
-				if (minimig_config.hardfile[i].filename[0])
-				{
-					strcpy(s, "                                ");
-					strncpy(&s[7], minimig_config.hardfile[i].filename, 21);
-				}
-				else
-				{
-					strcpy(s, "       ** not selected **");
-				}
-				enable = minimig_config.enable_ide && minimig_config.hardfile[i].enabled;
-				if (enable) menumask |= t;	// Make hardfile selectable
-				OsdWrite(n++, s, menusub == m++, enable == 0);
-				t <<= 2;
-				OsdWrite(n++, "", 0, 0);
-			}
-		}
-
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 9, 0);
-		menustate = MENU_MINIMIG_HARDFILE2;
-		break;
-
-	case MENU_MINIMIG_HARDFILE2:
-		saved_menustate = MENU_MINIMIG_HARDFILE1;
-
-		if (select || recent)
-		{
-			if (menusub == 0)
-			{
-				if (select)
-				{
-					minimig_config.enable_ide = (minimig_config.enable_ide == 0);
-					menustate = MENU_MINIMIG_HARDFILE1;
-				}
-			}
-			else if (menusub < 9)
-			{
-				if(menusub&1)
-				{
-					if (select)
-					{
-						int num = (menusub - 1) / 2;
-						minimig_config.hardfile[num].enabled = minimig_config.hardfile[num].enabled ? 0 : 1;
-						menustate = MENU_MINIMIG_HARDFILE1;
-					}
-				}
-				else
-				{
-					fs_Options = SCANO_DIR | SCANO_UMOUNT;
-					fs_MenuSelect = MENU_MINIMIG_HARDFILE_SELECTED;
-					fs_MenuCancel = MENU_MINIMIG_HARDFILE1;
-					strcpy(fs_pFileExt, "HDFVHDIMGDSK");
-					if (select)
-					{
-						int idx = (menusub - 2) / 2;
-						if (!Selected_S[idx][0]) memcpy(Selected_S[idx], minimig_config.hardfile[idx].filename, sizeof(Selected_S[idx]));
-						SelectFile(Selected_S[idx], "HDFVHDIMGDSK", fs_Options, fs_MenuSelect, fs_MenuCancel);
-					}
-					else if (recent_init(500)) menustate = MENU_RECENT1;
-				}
-			}
-			else if (menusub == 9 && select) // return to previous menu
+			else if (menusub == 9)
 			{
 				menustate = MENU_MINIMIG_MAIN1;
 				menusub = 6;
@@ -5477,10 +5331,124 @@ void HandleUI(void)
 		}
 		break;
 
-		/******************************************************************/
-		/* hardfile selected menu                                         */
-		/******************************************************************/
-	case MENU_MINIMIG_HARDFILE_SELECTED:
+	case MENU_MINIMIG_ROMFILE_SELECTED:
+		memcpy(Selected_F[4], selPath, sizeof(Selected_F[4]));
+		minimig_set_kickstart(selPath);
+		menustate = MENU_MINIMIG_CHIPSET1;
+		break;
+
+	case MENU_MINIMIG_DISK1:
+		helptext_idx = HELPTEXT_HARDFILE;
+		OsdSetTitle("Drives");
+
+		m = 0;
+		parentstate = menustate;
+		menumask = 0x601;	                      // b001000000001 - On/off & exit enabled by default...
+		if (minimig_config.enable_ide) menumask |= 0xAA;  // b010101010 - HD0/1/2/3 type
+		OsdWrite(m++, "", 0, 0);
+		strcpy(s, " IDE A600/A1200    : ");
+		strcat(s, minimig_config.enable_ide ? "On " : "Off");
+		OsdWrite(m++, s, menusub == 0, 0);
+		OsdWrite(m++);
+
+		{
+			uint n = 1, t = 4;
+			for (uint i = 0; i < 4; i++)
+			{
+				strcpy(s, (i & 2) ? " Secondary " : " Primary ");
+				strcat(s, (i & 1) ? "Slave: " : "Master: ");
+				strcat(s, minimig_config.hardfile[i].enabled ? "Enabled" : "Disabled");
+				OsdWrite(m++, s, minimig_config.enable_ide ? (menusub == n++) : 0, minimig_config.enable_ide == 0);
+				if (minimig_config.hardfile[i].filename[0])
+				{
+					strcpy(s, "                                ");
+					strncpy(&s[3], minimig_config.hardfile[i].filename, 25);
+				}
+				else
+				{
+					strcpy(s, "   ** not selected **");
+				}
+				enable = minimig_config.enable_ide && minimig_config.hardfile[i].enabled;
+				if (enable) menumask |= t;	// Make hardfile selectable
+				OsdWrite(m++, s, menusub == n++, enable == 0);
+				t <<= 2;
+				if(i == 1) OsdWrite(m++);
+			}
+		}
+
+		OsdWrite(m++);
+		sprintf(s, " Floppy Disk Turbo : %s", minimig_config.floppy.speed ? "On" : "Off");
+		OsdWrite(m++, s, menusub == 9, 0);
+		OsdWrite(m++);
+
+		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 10, 0);
+		menustate = MENU_MINIMIG_DISK2;
+		break;
+
+	case MENU_MINIMIG_DISK2:
+		saved_menustate = MENU_MINIMIG_DISK1;
+
+		if (select || recent)
+		{
+			if (menusub == 0)
+			{
+				if (select)
+				{
+					minimig_config.enable_ide = (minimig_config.enable_ide == 0);
+					menustate = MENU_MINIMIG_DISK1;
+				}
+			}
+			else if (menusub < 9)
+			{
+				if(menusub&1)
+				{
+					if (select)
+					{
+						int num = (menusub - 1) / 2;
+						minimig_config.hardfile[num].enabled = minimig_config.hardfile[num].enabled ? 0 : 1;
+						menustate = MENU_MINIMIG_DISK1;
+					}
+				}
+				else
+				{
+					fs_Options = SCANO_DIR | SCANO_UMOUNT;
+					fs_MenuSelect = MENU_MINIMIG_HDFFILE_SELECTED;
+					fs_MenuCancel = MENU_MINIMIG_DISK1;
+					strcpy(fs_pFileExt, "HDFVHDIMGDSK");
+					if (select)
+					{
+						int idx = (menusub - 2) / 2;
+						if (!Selected_S[idx][0]) memcpy(Selected_S[idx], minimig_config.hardfile[idx].filename, sizeof(Selected_S[idx]));
+						SelectFile(Selected_S[idx], "HDFVHDIMGDSK", fs_Options, fs_MenuSelect, fs_MenuCancel);
+					}
+					else if (recent_init(500)) menustate = MENU_RECENT1;
+				}
+			}
+			else if (menusub == 9 && select) // return to previous menu
+			{
+				minimig_config.floppy.speed ^= 1;
+				minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
+				menustate = MENU_MINIMIG_DISK1;
+			}
+			else if (menusub == 10 && select) // return to previous menu
+			{
+				menustate = MENU_MINIMIG_MAIN1;
+				menusub = 5;
+			}
+		}
+
+		if (menu)
+		{
+			menustate = MENU_NONE1;
+		}
+		else if (back || left)
+		{
+			menustate = MENU_MINIMIG_MAIN1;
+			menusub = 5;
+		}
+		break;
+
+	case MENU_MINIMIG_HDFFILE_SELECTED:
 		{
 			memcpy(Selected_S[(menusub - 2) / 2], selPath, sizeof(Selected_S[(menusub - 2) / 2]));
 			recent_update(SelectedDir, selPath, SelectedLabel, 500);
@@ -5489,11 +5457,11 @@ void HandleUI(void)
 			if (len > sizeof(minimig_config.hardfile[num].filename) - 1) len = sizeof(minimig_config.hardfile[num].filename) - 1;
 			if(len) memcpy(minimig_config.hardfile[num].filename, selPath, len);
 			minimig_config.hardfile[num].filename[len] = 0;
-			menustate = checkHDF(minimig_config.hardfile[num].filename, &rdb) ? MENU_MINIMIG_HARDFILE1 : MENU_MINIMIG_HARDFILE_SELECTED2;
+			menustate = checkHDF(minimig_config.hardfile[num].filename, &rdb) ? MENU_MINIMIG_DISK1 : MENU_MINIMIG_HDFFILE_SELECTED2;
 		}
 		break;
 
-	case MENU_MINIMIG_HARDFILE_SELECTED2:
+	case MENU_MINIMIG_HDFFILE_SELECTED2:
 		m = 0;
 		menumask = 0x1;
 		if (!rdb)
@@ -5531,28 +5499,25 @@ void HandleUI(void)
 
 		menusub_last = menusub;
 		menusub = 0;
-		menustate = MENU_MINIMIG_HARDFILE_SELECTED3;
+		menustate = MENU_MINIMIG_HDFFILE_SELECTED3;
 		break;
 
-	case MENU_MINIMIG_HARDFILE_SELECTED3:
+	case MENU_MINIMIG_HDFFILE_SELECTED3:
 		if (select || menu)
 		{
 			menusub = menusub_last;
 			parentstate = menustate;
-			menustate = MENU_MINIMIG_HARDFILE1;
+			menustate = MENU_MINIMIG_DISK1;
 		}
 		break;
 
-		/******************************************************************/
-		/* video settings menu                                            */
-		/******************************************************************/
 	case MENU_MINIMIG_VIDEO1:
 		menumask = 0x1fff;
 		parentstate = menustate;
 		helptext_idx = 0; // helptexts[HELPTEXT_VIDEO];
 
 		m = 0;
-		OsdSetTitle("Audio & Video", OSD_ARROW_LEFT | OSD_ARROW_RIGHT);
+		OsdSetTitle("Audio & Video");
 
 		strcpy(s, " TV Standard   : ");
 		strcat(s, minimig_config.chipset & CONFIG_NTSC ? "NTSC" : "PAL");
@@ -5594,7 +5559,7 @@ void HandleUI(void)
 		OsdWrite(m++);
 		OsdWrite(m++, minimig_get_adjust() ? " Finish screen adjustment" : " Adjust screen position", menusub == 11, 0);
 		for (; m < OsdGetSize() - 1; m++) OsdWrite(m);
-		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 12, 0);
+		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 12, 0);
 
 		menustate = MENU_MINIMIG_VIDEO2;
 		break;
@@ -5691,7 +5656,7 @@ void HandleUI(void)
 				if (select)
 				{
 					menustate = MENU_MINIMIG_MAIN1;
-				menusub = 9;
+					menusub = 7;
 				}
 				break;
 			}
@@ -5703,12 +5668,12 @@ void HandleUI(void)
 		else if (back || left)
 		{
 			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 9;
+			menusub = 7;
 		}
 		break;
 
 		/******************************************************************/
-		/* firmware menu */
+		/* system menu */
 		/******************************************************************/
 	case MENU_SYSTEM1:
 		if (video_fb_state())
@@ -6023,7 +5988,7 @@ void HandleUI(void)
 			video_chvt(2);
 			video_fb_enable(1);
 			vga_nag();
-			sprintf(cmd, "#!/bin/bash\nexport LC_ALL=en_US.UTF-8\ncd $(dirname %s)\n%s\necho \"Press any key to continue\"\n", path, path);
+			sprintf(cmd, "#!/bin/bash\nexport LC_ALL=en_US.UTF-8\nexport HOME=/root\ncd $(dirname %s)\n%s\necho \"Press any key to continue\"\n", path, path);
 			unlink("/tmp/script");
 			FileSave("/tmp/script", cmd, strlen(cmd));
 			ttypid = fork();
@@ -6052,6 +6017,7 @@ void HandleUI(void)
 		{
 			if (c & UPSTROKE)
 			{
+				video_menu_bg((user_io_8bit_set_status(0, 0) & 0xE) >> 1);
 				video_fb_enable(0);
 				menustate = MENU_SYSTEM1;
 				menusub = 3;
@@ -6538,22 +6504,12 @@ static void set_text(const char *message, unsigned char code)
 	while (l <= 7) OsdWrite(l++, "", 0, 0);
 }
 
-/*  Error Message */
-void ErrorMessage(const char *message, unsigned char code)
-{
-	menustate = MENU_ERROR;
-
-	OsdSetTitle("Error", 0);
-	set_text(message, code);
-	OsdEnable(0); // do not disable KEYBOARD
-}
-
 void InfoMessage(const char *message, int timeout, const char *title)
 {
 	if (menustate != MENU_INFO)
 	{
 		OsdSetTitle(title, 0);
-		OsdEnable(0); // do not disable keyboard
+		OsdEnable(OSD_MSG); // do not disable keyboard
 	}
 
 	set_text(message, 0);
@@ -6634,4 +6590,42 @@ int menu_allow_cfg_switch()
 void menu_process_save()
 {
 	menu_save_timer = GetTimer(1000);
+}
+
+static char pchar[] = { 0x8C, 0x8E, 0x8F, 0x90, 0x91, 0x7F };
+
+#define PROGRESS_CNT    28
+#define PROGRESS_CHARS  (int)(sizeof(pchar)/sizeof(pchar[0]))
+#define PROGRESS_MAX    ((PROGRESS_CHARS*PROGRESS_CNT)-1)
+
+void ProgressMessage(const char* title, const char* text, int current, int max)
+{
+	static int progress;
+	if (!current && !max)
+	{
+		progress = -1;
+		MenuHide();
+		return;
+	}
+
+	int new_progress = (((uint64_t)current)*PROGRESS_MAX) / max;
+	if (progress != new_progress)
+	{
+		progress = new_progress;
+		static char progress_buf[128];
+		memset(progress_buf, 0, sizeof(progress_buf));
+
+		if (new_progress > PROGRESS_MAX) new_progress = PROGRESS_MAX;
+		char c = pchar[new_progress % PROGRESS_CHARS];
+		new_progress /= PROGRESS_CHARS;
+
+		char *buf = progress_buf;
+		sprintf(buf, "\n\n %.27s\n ", text);
+		buf += strlen(buf);
+
+		for (int i = 0; i <= new_progress; i++) buf[i] = (i < new_progress) ? 0x7F : c;
+		buf[PROGRESS_CNT] = 0;
+
+		InfoMessage(progress_buf, 2000, title);
+	}
 }
