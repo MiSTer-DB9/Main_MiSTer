@@ -21,7 +21,7 @@
 
 // 0x08 - 0x0F - core specific
 
-#define UIO_DB9_GET     0x0f
+#define UIO_USERIO_GET  0x0f
 
 #define UIO_JOYSTICK2   0x10  // also used by minimig and 8 bit
 #define UIO_JOYSTICK3   0x11  // -"-
@@ -92,7 +92,6 @@
 #define UIO_MM2_FLP     0xF7 //0x44
 #define UIO_MM2_HDD     0xF8 //0x54
 #define UIO_MM2_JOY     0xF9 //0x64
-#define UIO_MM2_DB9TYPE 0xFA 
 
 #define JOY_RIGHT       0x01
 #define JOY_LEFT        0x02
@@ -149,7 +148,6 @@
 // core type value should be unlikely to be returned by broken cores
 #define CORE_TYPE_UNKNOWN   0x55
 #define CORE_TYPE_8BIT      0xa4   // generic core
-#define CORE_TYPE_ARCHIE    0xa6   // Acorn Archimedes
 #define CORE_TYPE_SHARPMZ   0xa7   // Sharp MZ Series
 #define CORE_TYPE_8BIT2     0xa8   // generic core using dual SDRAM
 
@@ -200,9 +198,8 @@ int user_io_get_kbd_reset();
 uint32_t user_io_get_file_crc();
 int  user_io_file_mount(const char *name, unsigned char index = 0, char pre = 0);
 char *user_io_make_filepath(const char *path, const char *filename);
-char *user_io_get_core_name();
+char *user_io_get_core_name(int orig = 0);
 char *user_io_get_core_path(const char *suffix = NULL, int recheck = 0);
-const char *user_io_get_core_name_ex();
 void user_io_name_override(const char* name);
 char has_menu();
 
@@ -226,7 +223,7 @@ void user_io_set_ini(int ini_num);
 void user_io_send_buttons(char);
 uint16_t user_io_get_sdram_cfg();
 
-int user_io_file_tx(const char* name, unsigned char index = 0, char opensave = 0, char mute = 0, char composite = 0);
+int user_io_file_tx(const char* name, unsigned char index = 0, char opensave = 0, char mute = 0, char composite = 0, uint32_t load_addr = 0);
 int user_io_file_tx_a(const char* name, uint16_t index);
 unsigned char user_io_ext_idx(char *, char*);
 void user_io_set_index(unsigned char index);
@@ -281,6 +278,7 @@ char is_archie();
 char is_gba();
 char is_c64();
 char is_st();
+char is_arcade();
 
 #define HomeDir(x) user_io_get_core_path(x)
 #define CoreName user_io_get_core_name()
