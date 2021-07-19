@@ -214,9 +214,6 @@
     <ClCompile Include="support\chd\mister_chd.cpp">
       <Filter>Source Files\support</Filter>
     </ClCompile>
-    <ClCompile Include="shmem.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="battery.h">
@@ -410,9 +407,6 @@
     </ClInclude>
     <ClInclude Include="support\chd\mister_chd.h">
       <Filter>Header Files\support</Filter>
-    </ClInclude>
-    <ClInclude Include="shmem.h">
-      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

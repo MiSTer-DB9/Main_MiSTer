@@ -41,6 +41,7 @@ static char core_path[1024] = {};
 static char rbf_path[1024] = {};
 
 static fileTYPE sd_image[16] = {};
+static int      sd_type[16] = {};
 static int      sd_image_cangrow[16] = {};
 static uint64_t buffer_lba[16] = { ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,
 								   ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,
@@ -1503,6 +1504,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre)
 	int len = strlen(name);
 
 	sd_image_cangrow[index] = (pre != 0);
+	sd_type[index] = 0;
 
 	if (len)
 	{
@@ -1517,7 +1519,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre)
 			{
 				ret = x2trd(name, sd_image + index);
 			}
-			else if (is_c64() && len > 4 && !strcasecmp(name + len - 4, ".t64"))
+			else if (len > 4 && !strcasecmp(name + len - 4, ".t64"))
 			{
 				writable = 0;
 				ret = c64_openT64(name, sd_image + index);
@@ -1527,9 +1529,10 @@ int user_io_file_mount(const char *name, unsigned char index, char pre)
 			{
 				writable = FileCanWrite(name);
 				ret = FileOpenEx(&sd_image[index], name, writable ? (O_RDWR | O_SYNC) : O_RDONLY);
-				if (ret && is_c64() && len > 4 && (!strcasecmp(name + len - 4, ".d64") || !strcasecmp(name + len - 4, ".g64")))
+				if (ret && len > 4 && (!strcasecmp(name + len - 4, ".d64") || !strcasecmp(name + len - 4, ".g64")))
 				{
 					ret = c64_openGCR(name, sd_image + index, index);
+					sd_type[index] = 1;
 					if(!ret) FileClose(&sd_image[index]);
 				}
 			}
@@ -2737,24 +2740,6 @@ void user_io_poll()
 					lba = spi_w(0);
 					lba = (lba & 0xFFFF) | (((uint32_t)spi_w(0)) << 16);
 
-				blkpow = 7 + ((c >> 6) & 7);
-				blksz = (((c >> 9) & 0x3F) + 1);
-				sz = blksz << blkpow;
-				if (sz > sizeof(buffer[0]))
-				{
-					sz = sizeof(buffer[0]);
-					blksz = sz >> blkpow;
-				}
-				//if (op) printf("c=%X, op=%d, blkpow=%d, sz=%d, lba=%llu, disk=%d\n", c, op, blkpow, sz, lba, disk);
-			}
-			else
-			{
-				c = spi_w(0);
-				if ((c & 0xf0) == 0x50 && (c & 0x3F03))
-				{
-					lba = spi_w(0);
-					lba = (lba & 0xFFFF) | (((uint32_t)spi_w(0)) << 16);
-
 					// check if core requests configuration
 					if ((c & 0xC) == 0xC)
 					{
@@ -2788,7 +2773,7 @@ void user_io_poll()
 			}
 			DisableIO();
 
-			if ((blksz == 32) && is_c64())
+			if ((blksz == 32) && sd_type[disk])
 			{
 				if (op == 2) c64_writeGCR(disk, lba);
 				else if (op & 1) c64_readGCR(disk, lba);
@@ -2928,8 +2913,6 @@ void user_io_poll()
 						buffer_lba[disk] = -1;
 					}
 				}
-				}
-			else break;
 			}
 			else break;
 		}
