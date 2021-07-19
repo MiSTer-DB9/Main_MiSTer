@@ -27,11 +27,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <string.h>
 #include "../../hardware.h"
 #include "../../file_io.h"
-#include "minimig_hdd.h"
 #include "../../menu.h"
-#include "minimig_config.h"
 #include "../../debug.h"
 #include "../../user_io.h"
+#include "../../ide.h"
+#include "minimig_hdd.h"
+#include "minimig_config.h"
 
 #define CMD_IDECMD                 0x04
 #define CMD_IDEDAT                 0x08
@@ -158,12 +159,23 @@ static void SetHardfileGeometry(hdfTYPE *hdf, int isHDF)
 
 	if (isHDF && flg)
 	{
-		//use UAE settings.
-		hdf->heads = 1;
-		hdf->sectors = 32;
+		hdf->heads = 16;
+		hdf->sectors = 128;
+
+		for (int i = 32; i <= 2048; i <<= 1)
+		{
+			int cylinders = hdf->file.size / (512 * i) + 1;
+			if (cylinders < 65536)
+			{
+				hdf->sectors = (i < 128) ? i : 128;
+				hdf->heads = i / hdf->sectors;
+				break;
+			}
+		}
 
 		int spc = hdf->heads * hdf->sectors;
 		hdf->cylinders = hdf->file.size / (512 * spc) + 1;
+		if (hdf->cylinders > 65535) hdf->cylinders = 65535;
 		hdf->offset = -spc;
 
 		printf("No RDB header found in HDF image. Assume it's image of single partition. Use Virtual RDB header.\n");
@@ -728,7 +740,7 @@ uint8_t OpenHardfile(uint8_t unit, const char* filename)
 
 	if (is_minimig())
 	{
-		if (minimig_config.enable_ide && minimig_config.hardfile[unit].enabled)
+		if ((minimig_config.ide_cfg & 1) && minimig_config.hardfile[unit].cfg)
 		{
 			printf("\nChecking HDD %d\n", unit);
 			if (minimig_config.hardfile[unit].filename[0])
@@ -742,7 +754,32 @@ uint8_t OpenHardfile(uint8_t unit, const char* filename)
 					printf("CHS: %u/%u/%u", hdf->cylinders, hdf->heads, hdf->sectors);
 					printf(" (%llu MB), ", ((((uint64_t)hdf->cylinders) * hdf->heads * hdf->sectors) >> 11));
 					printf("Offset: %d\n", hdf->offset);
-					return 1;
+
+					if (ide_check() & 0x8000)
+					{
+						int present = 0;
+						int cd = 0;
+
+						int len = strlen(minimig_config.hardfile[unit].filename);
+						char *ext = minimig_config.hardfile[unit].filename + len - 4;
+						int vhd = (len > 4 && (!strcasecmp(ext, ".hdf") || (!strcasecmp(ext, ".vhd"))));
+
+						if (!vhd)
+						{
+							const char *img_name = cdrom_parse(unit, minimig_config.hardfile[unit].filename);
+							if (img_name) present = ide_img_mount(&hdf->file, img_name, 0);
+							if (present) cd = 1;
+							else vhd = 1;
+						}
+
+						if (!present && vhd) present = ide_img_mount(&hdf->file, minimig_config.hardfile[unit].filename, 1);
+						ide_img_set(unit, present ? &hdf->file : 0, cd, hdf->sectors, hdf->heads, cd ? 0 : -hdf->offset);
+						if (present) return 1;
+					}
+					else
+					{
+						return 1;
+					}
 				}
 			}
 			printf("HDD %d: not present\n", unit);
@@ -768,6 +805,7 @@ uint8_t OpenHardfile(uint8_t unit, const char* filename)
 	}
 
 	// close if opened earlier.
+	if (is_minimig() && (ide_check() & 0x8000)) ide_img_set(unit, 0, 0);
 	FileClose(&hdf->file);
 	return 0;
 }
