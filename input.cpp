@@ -892,8 +892,11 @@ typedef struct
 
 	int      misc_flags;
 	int      paddle_val;
+	int      spinner_prev;
 	int      spinner_acc;
 	int      spinner_prediv;
+	int      spinner_dir;
+	int      spinner_accept;
 	int      old_btn;
 	int      ds_mouse_emu;
 
@@ -1048,6 +1051,12 @@ int toggle_kbdled(int mask)
 	int state = !get_kbdled(mask);
 	set_kbdled(mask, state);
 	return state;
+}
+
+static int sysled_is_enabled = 1;
+void sysled_enable(int en)
+{
+	sysled_is_enabled = en;
 }
 
 #define JOYMAP_DIR  "inputs/"
@@ -1789,6 +1798,7 @@ static void update_num_hw(int dev, int num)
 		led_path = get_led_path(dev);
 		if (led_path)
 		{
+			set_led(led_path, ":home", num ? 1 : 15);
 			set_led(led_path, ":player1", (num == 0 || num == 1 || num == 5));
 			set_led(led_path, ":player2", (num == 0 || num == 2 || num == 6));
 			set_led(led_path, ":player3", (num == 0 || num == 3));
@@ -2926,7 +2936,6 @@ void mergedevs()
 				{
 					//All mice as spinners
 					if ((cfg.spinner_vid == 0xFFFF && cfg.spinner_pid == 0xFFFF)
-
 						//Mouse as spinner
 						|| (cfg.spinner_vid && cfg.spinner_pid && input[i].vid == cfg.spinner_vid && input[i].pid == cfg.spinner_pid))
 					{
@@ -2935,7 +2944,7 @@ void mergedevs()
 						input[i].spinner_prediv = 1;
 					}
 
-					//Arcade Spinner TS-BSP01
+					//Arcade Spinner TS-BSP01 (X axis) and Atari (Y axis)
 					if (input[i].vid == 0x32be && input[i].pid == 0x1420)
 					{
 						input[i].quirk = QUIRK_MSSP;
@@ -2999,6 +3008,32 @@ static struct
 	{KEY_K,         2, 0x12B}, // 2P 6
 	{KEY_J,         2, 0x12C}, // 2P 7
 	{KEY_L,         2, 0x12D}, // 2P 8
+
+/*
+	some key codes overlap with 1P/2P buttons.
+
+	{KEY_7,         3, 0x120}, // 3P coin
+	{KEY_3,         3, 0x121}, // 3P start
+	{KEY_I,         3, 0x122}, // 3P up
+	{KEY_K,         3, 0x123}, // 3P down
+	{KEY_J,         3, 0x124}, // 3P left
+	{KEY_L,         3, 0x125}, // 3P right
+	{KEY_RIGHTCTRL, 3, 0x126}, // 3P 1
+	{KEY_RIGHTSHIFT,3, 0x127}, // 3P 2
+	{KEY_ENTER,     3, 0x128}, // 3P 3
+	{KEY_O,         3, 0x129}, // 3P 4
+
+	{KEY_8,         4, 0x120}, // 4P coin
+	{KEY_4,         4, 0x121}, // 4P start
+	{KEY_Y,         4, 0x122}, // 4P up
+	{KEY_N,         4, 0x123}, // 4P down
+	{KEY_V,         4, 0x124}, // 4P left
+	{KEY_U,         4, 0x125}, // 4P right
+	{KEY_B,         4, 0x126}, // 4P 1
+	{KEY_E,         4, 0x127}, // 4P 2
+	{KEY_H,         4, 0x128}, // 4P 3
+	{KEY_M,         4, 0x129}, // 4P 4
+*/
 };
 
 static void send_mouse_with_throttle(int dev, int xval, int yval, int btn, int8_t data_3)
@@ -3159,6 +3194,136 @@ static void touchscreen_proc(int dev, input_event *ev)
 		}
 	}
 
+}
+
+static int vcs_proc(int dev, input_event *ev)
+{
+	devInput *inp = &input[dev];
+
+	if (ev->type == EV_KEY)
+	{
+		int flg = 0;
+		int alt = inp->mod && (inp->misc_flags & 2);
+		switch (ev->code)
+		{
+		case 0x130: // red top
+			if (!ev->value)
+			{
+				ev->code = !alt ? 0x135 : 0x130;
+				input_cb(ev, 0, dev);
+			}
+			ev->code = alt ? 0x135 : 0x130;
+			flg = 1;
+			break;
+
+		case 0x131: // red bottom
+			flg = 2;
+			break;
+
+		case 0x0AC: // atari
+			if (!ev->value)
+			{
+				ev->code = !alt ? 0x136 : 0x132;
+				input_cb(ev, 0, dev);
+			}
+			ev->code = alt ? 0x136 : 0x132;
+			flg = 4;
+			break;
+
+		case 0x09E: // back
+			if (!ev->value)
+			{
+				ev->code = !alt ? 0x137 : 0x133;
+				input_cb(ev, 0, dev);
+			}
+			ev->code = alt ? 0x137 : 0x133;
+			flg = 8;
+			break;
+
+		case 0x08B: // menu
+			if (!ev->value)
+			{
+				ev->code = !alt ? 0x138 : 0x134;
+				input_cb(ev, 0, dev);
+			}
+			ev->code = alt ? 0x138 : 0x134;
+			flg = 16;
+			break;
+		}
+
+		if (flg)
+		{
+			if (ev->value) inp->misc_flags |= flg;
+			else inp->misc_flags &= ~flg;
+
+			if ((inp->misc_flags & 0x1F) == 0x1B)
+			{
+				inp->mod = !inp->mod;
+				inp->has_map = 0;
+				inp->has_mmap = 0;
+				Info(inp->mod ? "8-button mode" : "5-button mode");
+			}
+		}
+		if (ev->code == 0x131 && inp->mod) return 0;
+	}
+	else if (ev->code == 7)
+	{
+		if (inp->spinner_prev < 0) inp->spinner_prev = ev->value;
+		int acc = inp->spinner_prev;
+
+		int diff =
+			(acc > 700 && ev->value < 300) ? (ev->value + 1024 - acc) :
+			(acc < 300 && ev->value > 700) ? (ev->value - 1024 - acc) : (ev->value - acc);
+
+		if (inp->spinner_accept)
+		{
+			inp->spinner_accept = (inp->spinner_dir && diff >= 0) || (!inp->spinner_dir && diff <= 0);
+		}
+		else if (diff <= -6 || diff >= 6)
+		{
+			inp->spinner_accept = 1;
+			inp->spinner_dir = (diff > 0) ? 1 : 0;
+			diff = inp->spinner_dir ? 1 : -1;
+		}
+
+		if (inp->spinner_accept && diff)
+		{
+			inp->spinner_prev = ev->value;
+
+			if ((inp->misc_flags & 0x1F) == 0xB && ((inp->misc_flags & 0x20) ? (diff < -30) : (diff > 30)))
+			{
+				inp->misc_flags ^= 0x20;
+				Info((inp->misc_flags & 0x20) ? "Spinner: Enabled" : "Spinner: Disabled");
+			}
+
+			if (inp->misc_flags & 0x20)
+			{
+				inp->paddle_val += diff;
+				if (inp->paddle_val < 0) inp->paddle_val = 0;
+				if (inp->paddle_val > 511) inp->paddle_val = 511;
+
+				if (is_menu()) printf("vcs: diff = %d, paddle=%d, ev.value = %d\n", diff, inp->paddle_val, ev->value);
+
+				input_absinfo absinfo;
+				absinfo.minimum = 0;
+				absinfo.maximum = 511;
+				ev->type = EV_ABS;
+				ev->code = 8;
+				ev->value = inp->paddle_val;
+				input_cb(ev, &absinfo, dev);
+
+				inp->spinner_acc += diff;
+				ev->type = EV_REL;
+				ev->code = 7;
+				ev->value = inp->spinner_acc / 2;
+				inp->spinner_acc -= ev->value * 2;
+				input_cb(ev, 0, dev);
+			}
+		}
+		return 0;
+	}
+
+	return 1;
 }
 
 int input_test(int getchar)
@@ -3330,6 +3495,17 @@ int input_test(int getchar)
 								input[n].guncal[2] = 1;
 								input[n].guncal[3] = 1023;
 								input_lightgun_load(n);
+							}
+						}
+
+						if (input[n].vid == 0x057e)
+						{
+							if (strstr(input[n].name, " IMU"))
+							{
+								// don't use Accelerometer
+								close(pool[n].fd);
+								pool[n].fd = -1;
+								continue;
 							}
 						}
 
@@ -3603,95 +3779,7 @@ int input_test(int getchar)
 									}
 								}
 
-								if (input[dev].quirk == QUIRK_VCS)
-								{
-									if (ev.type == EV_KEY)
-									{
-										int alt = input[i].mod && (input[i].misc_flags & 2);
-										switch (ev.code)
-										{
-										case 0x130:
-											if (!ev.value)
-											{
-												ev.code = !alt ? 0x135 : 0x130;
-												input_cb(&ev, &absinfo, i);
-											}
-											ev.code = alt ? 0x135 : 0x130;
-											break;
-										case 0x0AC:
-											if (!ev.value)
-											{
-												ev.code = !alt ? 0x136 : 0x132;
-												input_cb(&ev, &absinfo, i);
-											}
-											ev.code = alt ? 0x136 : 0x132;
-											break;
-										case 0x09E:
-											if (!ev.value)
-											{
-												ev.code = !alt ? 0x137 : 0x133;
-												input_cb(&ev, &absinfo, i);
-											}
-											ev.code = alt ? 0x137 : 0x133;
-											break;
-										case 0x08B:
-											if (!ev.value)
-											{
-												ev.code = !alt ? 0x138 : 0x134;
-												input_cb(&ev, &absinfo, i);
-											}
-											ev.code = alt ? 0x138 : 0x134;
-											break;
-										}
-
-										if (ev.code >= 0x130 && ev.code <= 0x134)
-										{
-											if (ev.value) input[i].misc_flags |= (0x1 << (ev.code - 0x130));
-											else input[i].misc_flags &= ~(0x1 << (ev.code - 0x130));
-
-											if ((input[i].misc_flags & 0x1B) == 0x1B)
-											{
-												input[i].misc_flags = 0;
-												input[i].mod = !input[i].mod;
-												input[i].has_map = 0;
-												input[i].has_mmap = 0;
-												Info(input[i].mod ? "8-button mode" : "5-button mode");
-											}
-
-											if (ev.code == 0x131 && input[i].mod) continue;
-										}
-									}
-									else if (ev.code == 7)
-									{
-										if (input[i].spinner_acc < 0) input[i].spinner_acc = ev.value;
-
-										int diff =
-											(input[i].spinner_acc > 700 && ev.value < 300) ? (ev.value + 1024 - input[i].spinner_acc) :
-											(input[i].spinner_acc < 300 && ev.value > 700) ? (ev.value - 1024 - input[i].spinner_acc) :
-																							  ev.value - input[i].spinner_acc;
-
-										if (diff < -2 || diff>2)
-										{
-											if (is_menu()) printf("diff = %d, paddle=%d, old = %d, new = %d\n", diff, input[i].paddle_val, input[i].spinner_acc, ev.value);
-											input[i].spinner_acc = ev.value;
-
-											input[i].paddle_val += diff;
-											if (input[i].paddle_val < 0) input[i].paddle_val = 0;
-											if (input[i].paddle_val > 1023) input[i].paddle_val = 1023;
-
-											ev.type = EV_ABS;
-											ev.code = 8;
-											ev.value = input[i].paddle_val;
-											input_cb(&ev, &absinfo, i);
-
-											ev.type = EV_REL;
-											ev.code = 7;
-											ev.value = diff / 2;
-											input_cb(&ev, &absinfo, i);
-										}
-										continue;
-									}
-								}
+								if (input[dev].quirk == QUIRK_VCS && !vcs_proc(i, &ev)) continue;
 
 								if (input[dev].quirk == QUIRK_JAMMA && ev.type == EV_KEY)
 								{
@@ -3942,6 +4030,7 @@ int input_test(int getchar)
 
 							if (input[dev].quirk == QUIRK_MSSP)
 							{
+								int val = cfg.spinner_axis ? yval : xval;
 								int btn = (data[0] & 7) ? 1 : 0;
 								if (input[i].misc_flags != btn)
 								{
@@ -3955,7 +4044,7 @@ int input_test(int getchar)
 								int throttle = (cfg.spinner_throttle ? abs(cfg.spinner_throttle) : 100) * input[i].spinner_prediv;
 								int inv = cfg.spinner_throttle < 0;
 
-								input[i].spinner_acc += (xval * 100);
+								input[i].spinner_acc += (val * 100);
 								int spinner = (input[i].spinner_acc <= -throttle || input[i].spinner_acc >= throttle) ? (input[i].spinner_acc / throttle) : 0;
 								input[i].spinner_acc -= spinner * throttle;
 
@@ -3976,7 +4065,7 @@ int input_test(int getchar)
 									input_cb(&ev, &absinfo, i);
 								}
 
-								if (is_menu() && !video_fb_state()) printf("%s: xval=%d, btn=%d, spinner=%d, paddle=%d\n", input[i].devname, xval, btn, spinner, input[i].paddle_val);
+								if (is_menu() && !video_fb_state()) printf("%s: xval=%d, btn=%d, spinner=%d, paddle=%d\n", input[i].devname, val, btn, spinner, input[i].paddle_val);
 							}
 							else
 							{
@@ -4009,7 +4098,10 @@ int input_test(int getchar)
 			if ((pool[NUMDEV + 2].fd >= 0) && (pool[NUMDEV + 2].revents & POLLPRI))
 			{
 				static char status[16];
-				if (read(pool[NUMDEV + 2].fd, status, sizeof(status) - 1) && status[0] != '0') DISKLED_ON;
+				if (read(pool[NUMDEV + 2].fd, status, sizeof(status) - 1) && status[0] != '0')
+				{
+					if (sysled_is_enabled || video_fb_state()) DISKLED_ON;
+				}
 				lseek(pool[NUMDEV + 2].fd, 0, SEEK_SET);
 			}
 		}
