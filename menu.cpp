@@ -41,6 +41,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <libgen.h>
+#include <bluetooth.h>
+#include <hci.h>
+#include <hci_lib.h>
 
 #include "file_io.h"
 #include "osd.h"
@@ -102,8 +105,6 @@ enum MENU
 	MENU_KBDMAP,
 	MENU_KBDMAP1,
 	MENU_BTPAIR,
-	MENU_WMPAIR,
-	MENU_WMPAIR1,
 	MENU_LGCAL,
 	MENU_LGCAL1,
 	MENU_LGCAL2,
@@ -223,7 +224,7 @@ static char script_command[script_line_length];
 static int script_line;
 static char script_output[script_lines][script_line_length];
 static char script_line_output[script_line_length];
-static bool script_exited;
+static bool script_finished;
 
 // one screen width
 static const char* HELPTEXT_SPACER = "                                ";
@@ -557,7 +558,8 @@ static uint32_t menu_key_get(void)
 		if (but && CheckTimer(longpress) && !longpress_consumed)
 		{
 			longpress_consumed = 1;
-			menustate = MENU_BTPAIR;
+			if (menustate == MENU_SCRIPTS1) c = KEY_BACKSPACE;
+			else menustate = MENU_BTPAIR;
 		}
 
 		if (!but && last_but && !longpress_consumed) c = KEY_F12;
@@ -604,53 +606,6 @@ static uint32_t menu_key_get(void)
 	return(c);
 }
 
-static int has_bt()
-{
-	FILE *fp;
-	static char out[1035];
-
-	fp = popen("hcitool dev | grep hci0", "r");
-	if (!fp) return 0;
-
-	int ret = 0;
-	while (fgets(out, sizeof(out) - 1, fp) != NULL)
-	{
-		if (strlen(out)) ret = 1;
-	}
-
-	pclose(fp);
-	return ret;
-}
-
-static int toggle_wminput()
-{
-	if (access("/bin/wminput", F_OK) < 0 || access("/media/fat/linux/wiimote.cfg", F_OK) < 0) return -1;
-
-	FILE *fp;
-	static char out[1035];
-
-	fp = popen("pidof wminput", "r");
-	if (!fp) return -1;
-
-	int ret = -1;
-	if (fgets(out, sizeof(out) - 1, fp) != NULL)
-	{
-		if (strlen(out))
-		{
-			system("killall wminput");
-			ret = 0;
-		}
-	}
-	else
-	{
-		system("taskset 1 wminput --daemon --config /media/fat/linux/wiimote.cfg &");
-		ret = 1;
-	}
-
-	pclose(fp);
-	return ret;
-}
-
 static char* getNet(int spec)
 {
 	int netType = 0;
@@ -694,6 +649,27 @@ static char* getNet(int spec)
 
 	freeifaddrs(ifaddr);
 	return spec ? (ifa ? host : 0) : (char*)netType;
+}
+
+int bt_check()
+{
+	int res = (hci_get_route(0) >= 0);
+
+	static int cnt = 6;
+	if (cnt>=0)
+	{
+		cnt--;
+		//printf("*** cnt = %d\n", cnt);
+		if (!cnt && !res)
+		{
+			// Some BT dongles get stuck after boot.
+			// Kicking of USB port usually make it work.
+			printf("*** reset bt ***\n");
+			system("/bin/bluetoothd hcireset &");
+		}
+	}
+
+	return res;
 }
 
 static long sysinfo_timer;
@@ -1120,18 +1096,14 @@ void HandleUI(void)
 			break;
 
 		case KEY_F11:
-			if (user_io_osd_is_visible())
+			if (user_io_osd_is_visible() && (menustate != MENU_SCRIPTS1 || script_finished))
 			{
 				menustate = MENU_BTPAIR;
 			}
 			break;
 
 		case KEY_F10:
-			if (user_io_osd_is_visible() && !access("/bin/wminput", F_OK))
-			{
-				menustate = MENU_WMPAIR;
-			}
-			else if (input_has_lightgun())
+			if (input_has_lightgun())
 			{
 				menustate = MENU_LGCAL;
 			}
@@ -1888,6 +1860,11 @@ void HandleUI(void)
 			for (int i = 0; i < 16; i++) OsdWrite(m++);
 			OsdWrite(8, "          Saving...");
 			menustate = MENU_GENERIC_SAVE_WAIT;
+		}
+		else if (is_arcade() && spi_uio_cmd(UIO_CHK_UPLOAD))
+		{
+			menu_save_timer = GetTimer(1000);
+			arcade_nvm_save();
 		}
 		else if (menu)
 		{
@@ -4344,6 +4321,16 @@ void HandleUI(void)
 		OsdSetTitle((fs_Options & SCANO_CORES) ? "Cores" : "Select", 0);
 		PrintDirectory(hold_cnt<2);
 		menustate = MENU_FILE_SELECT2;
+		if (cfg.log_file_entry)
+		{
+			//Write out paths infos for external integration
+			FILE* filePtr = fopen("/tmp/CURRENTPATH", "w");
+			FILE* pathPtr = fopen("/tmp/FULLPATH", "w");
+			fprintf(filePtr, "%s", flist_SelectedItem()->altname);
+			fprintf(pathPtr, "%s", selPath);
+			fclose(filePtr);
+			fclose(pathPtr);
+		}
 		break;
 
 	case MENU_FILE_SELECT2:
@@ -4410,17 +4397,6 @@ void HandleUI(void)
 		if (flist_nDirEntries())
 		{
 			ScrollLongName(); // scrolls file name if longer than display line
-
-			if (cfg.log_file_entry)
-			{
-				//Write out paths infos for external integration
-				FILE* filePtr = fopen("/tmp/CURRENTPATH", "w");
-				FILE* pathPtr = fopen("/tmp/FULLPATH", "w");
-				fprintf(filePtr, "%s", flist_SelectedItem()->altname);
-				fprintf(pathPtr, "%s", selPath);
-				fclose(filePtr);
-				fclose(pathPtr);
-			}
 
 			if (c == KEY_HOME)
 			{
@@ -5848,28 +5824,6 @@ void HandleUI(void)
 		menusub = 0;
 		break;
 
-	case MENU_WMPAIR:
-		{
-			OsdSetTitle("Wiimote", 0);
-			int res = toggle_wminput();
-			menu_timer = GetTimer(2000);
-			for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i);
-			if (res < 0)       OsdWrite(7, "    Cannot enable Wiimote");
-			else if (res == 0) OsdWrite(7, "       Wiimote disabled");
-			else
-			{
-				OsdWrite(7, "       Wiimote enabled");
-				OsdWrite(9, "    Press 1+2 to connect");
-				menu_timer = GetTimer(3000);
-			}
-			menustate = MENU_WMPAIR1;
-		}
-		//fall through
-
-	case MENU_WMPAIR1:
-		if (CheckTimer(menu_timer)) menustate = MENU_NONE1;
-		break;
-
 	case MENU_LGCAL:
 		helptext_idx = 0;
 		OsdSetTitle("Lightgun Calibration", 0);
@@ -6030,16 +5984,16 @@ void HandleUI(void)
 
 	case MENU_SCRIPTS:
 		helptext_idx = 0;
-		menumask = 1;
+		menumask = 0;
 		menusub = 0;
 		OsdSetTitle((parentstate == MENU_BTPAIR) ? "BT Pairing" : flist_SelectedItem()->de.d_name, 0);
 		menustate = MENU_SCRIPTS1;
 		if (parentstate != MENU_BTPAIR) parentstate = MENU_SCRIPTS;
-		for (int i = 0; i < OsdGetSize() - 1; i++) OsdWrite(i, "", 0, 0);
-		OsdWrite(OsdGetSize() - 1, "           Cancel", menusub == 0, 0);
+		for (int i = 0; i < OsdGetSize() - 1; i++) OsdWrite(i);
+		OsdWrite(OsdGetSize() - 1, (parentstate == MENU_BTPAIR) ? "           Finish" : "           Cancel", menusub == 0, 0);
 		for (int i = 0; i < script_lines; i++) strcpy(script_output[i], "");
 		script_line=0;
-		script_exited = false;
+		script_finished = false;
 		cpu_set_t set;
 		CPU_ZERO(&set);
 		CPU_SET(0, &set);
@@ -6051,7 +6005,7 @@ void HandleUI(void)
 		break;
 
 	case MENU_SCRIPTS1:
-		if (!script_exited)
+		if (!script_finished)
 		{
 			if (!feof(script_pipe)) {
 				if (fgets(script_line_output, script_line_length, script_pipe) != NULL)
@@ -6075,34 +6029,45 @@ void HandleUI(void)
 				CPU_ZERO(&set);
 				CPU_SET(1, &set);
 				sched_setaffinity(0, sizeof(set), &set);
-				script_exited=true;
+				script_finished=true;
 				OsdWrite(OsdGetSize() - 1, "             OK", menusub == 0, 0);
 			};
 		};
 
-		if (select || (script_exited && menu))
+		if (select || menu || script_finished || c == KEY_BACKSPACE)
 		{
-			if (!script_exited)
+			if (!script_finished)
 			{
 				strcpy(script_command, "killall ");
-				strcat(script_command, (parentstate == MENU_BTPAIR) ? "btpair" : flist_SelectedItem()->de.d_name);
+				strcat(script_command, (parentstate == MENU_BTPAIR) ? "-SIGINT btctl" : flist_SelectedItem()->de.d_name);
 				system(script_command);
 				pclose(script_pipe);
 				cpu_set_t set;
 				CPU_ZERO(&set);
 				CPU_SET(1, &set);
 				sched_setaffinity(0, sizeof(set), &set);
-				script_exited = true;
+				script_finished = true;
 			};
 
-			if (parentstate == MENU_BTPAIR)
+			if (c == KEY_BACKSPACE && (parentstate == MENU_BTPAIR))
 			{
-				menustate = MENU_NONE1;
+				for (int i = 0; i < OsdGetSize() - 1; i++) OsdWrite(i);
+				OsdWrite(7, "   Delete all pairings...");
+				OsdUpdate();
+				system("/bin/bluetoothd renew");
+				menustate = MENU_BTPAIR;
 			}
 			else
 			{
-				menustate = MENU_SYSTEM1;
-				menusub = 3;
+				if (parentstate == MENU_BTPAIR)
+				{
+					menustate = MENU_NONE1;
+				}
+				else
+				{
+					menustate = MENU_SYSTEM1;
+					menusub = 3;
+				}
 			}
 		}
 		break;
@@ -6277,7 +6242,7 @@ void HandleUI(void)
 
 				int netType = (int)getNet(0);
 				if (netType) str[8] = 0x1b + netType;
-				if (has_bt()) str[9] = 4;
+				if (bt_check()) str[9] = 4;
 				if (user_io_get_sdram_cfg() & 0x8000)
 				{
 					switch (user_io_get_sdram_cfg() & 7)
