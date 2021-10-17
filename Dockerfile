@@ -1,4 +1,4 @@
-FROM theypsilon/gcc-linaro:7.5.0
+FROM theypsilon/gcc-arm:10.2-2020.11
 LABEL maintainer="theypsilon@gmail.com"
 WORKDIR /project
 ADD . /project
