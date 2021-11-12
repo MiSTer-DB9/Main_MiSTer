@@ -1259,13 +1259,13 @@ void user_io_init(const char *path, const char *xml)
 		sprintf(mainpath, "uartmode.%s", user_io_get_core_name());
 		FileLoadConfig(mainpath, &mode, 4);
 
-		uint64_t speeds = 0;
+		uint32_t speeds[3] = {};
 		sprintf(mainpath, "uartspeed.%s", user_io_get_core_name());
-		FileLoadConfig(mainpath, &speeds, 8);
+		FileLoadConfig(mainpath, speeds, sizeof(speeds));
 
-		ValidateUARTbaud(1, speeds & 0xFFFFFFFF);
-		ValidateUARTbaud(3, speeds >> 32);
-		ValidateUARTbaud(4, uart_speeds[0]);
+		ValidateUARTbaud(1, speeds[0]);
+		ValidateUARTbaud(3, speeds[1]);
+		ValidateUARTbaud(4, speeds[2] ? speeds[2] : uart_speeds[0]);
 
 		printf("UART bauds: %d/%d/%d\n", GetUARTbaud(1), GetUARTbaud(3), GetUARTbaud(4));
 	}
@@ -2215,7 +2215,7 @@ int user_io_file_tx(const char* name, unsigned char index, char opensave, char m
 				user_io_file_tx_data(buf, 512);
 
 				//strip original SNES ROM header if present (not used)
-				if (bytes2send & 512)
+				if ((bytes2send % 1024) == 512)
 				{
 					bytes2send -= 512;
 					FileReadSec(&f, buf);
@@ -2257,7 +2257,7 @@ int user_io_file_tx(const char* name, unsigned char index, char opensave, char m
 			user_io_file_tx_data(buf, 512);
 
 			//strip original SNES ROM header if present (not used)
-			if (bytes2send & 512)
+			if ((bytes2send % 1024) == 512)
 			{
 				bytes2send -= 512;
 				FileReadSec(&f, buf);
@@ -3378,7 +3378,7 @@ void user_io_mouse(unsigned char b, int16_t x, int16_t y, int16_t w)
 			if (!osd_is_visible)
 			{
 				spi_uio_cmd_cont(UIO_MOUSE);
-				spi_w(ps2_mouse[0] | (w << 8));
+				spi_w(ps2_mouse[0] | ((w & 0x7f) << 8));
 				spi_w(ps2_mouse[1] | ((((uint16_t)b) << 5) & 0xF00));
 				spi_w(ps2_mouse[2] | ((((uint16_t)b) << 1) & 0x100));
 				DisableIO();
