@@ -2184,7 +2184,7 @@ void HandleUI(void)
 					}
 					if (!store_name) user_io_store_filename(selPath);
 					user_io_file_tx(selPath, idx, opensave, 0, 0, load_addr);
-					if (user_io_use_cheats()) cheats_init(selPath, user_io_get_file_crc());
+					if (user_io_use_cheats() && !store_name) cheats_init(selPath, user_io_get_file_crc());
 				}
 
 				if (addon[0] == 'f' && addon[1] == '1') process_addon(addon, idx);
@@ -2853,10 +2853,12 @@ void HandleUI(void)
 					int mode = GetUARTMode() | (GetMidiLinkMode() << 8);
 					sprintf(s, "uartmode.%s", user_io_get_core_name());
 					FileSaveConfig(s, &mode, 4);
-					uint64_t speeds = GetUARTbaud(3);
-					speeds = (speeds << 32) | GetUARTbaud(1);
+					uint32_t speeds[3];
+					speeds[0] = GetUARTbaud(1);
+					speeds[1] = GetUARTbaud(3);
+					speeds[2] = GetUARTbaud(4);
 					sprintf(s, "uartspeed.%s", user_io_get_core_name());
-					FileSaveConfig(s, &speeds, 8);
+					FileSaveConfig(s, speeds, sizeof(speeds));
 					menustate = MENU_COMMON1;
 					menusub = 4;
 				}
@@ -2950,7 +2952,7 @@ void HandleUI(void)
 			menumask = 0;
 			int mode = GetUARTMode();
 			const uint32_t *bauds = GetUARTbauds(mode);
-			for (uint32_t i = 0; i < 12; i++)
+			for (uint32_t i = 0; i < 13; i++)
 			{
 				if (!bauds[i]) break;
 				menumask |= 1 << i;
@@ -2961,7 +2963,7 @@ void HandleUI(void)
 			uint32_t k = 0;
 			while (k < start) OsdWrite(k++);
 
-			for (uint32_t i = 0; i < 12; i++)
+			for (uint32_t i = 0; i < 13; i++)
 			{
 				if (!bauds[i]) break;
 
@@ -2987,7 +2989,7 @@ void HandleUI(void)
 			else if (select)
 			{
 				const uint32_t *bauds = GetUARTbauds(GetUARTMode());
-				for (uint32_t i = 0; i < 12; i++)
+				for (uint32_t i = 0; i < 13; i++)
 				{
 					if (!bauds[i]) break;
 					if (menusub == i)
