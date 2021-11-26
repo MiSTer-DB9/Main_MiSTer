@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
-#include "lib/lodepng/lodepng.h"
+#include "lib/imlib2/Imlib2.h"
 
 #include "hardware.h"
 #include "osd.h"
@@ -259,6 +259,13 @@ char is_c64()
 {
 	if (!is_c64_type) is_c64_type = strcasecmp(core_name, "C64") ? 2 : 1;
 	return (is_c64_type == 1);
+}
+
+static int is_psx_type = 0;
+char is_psx()
+{
+	if (!is_psx_type) is_psx_type = strcasecmp(core_name, "PlayStation") ? 2 : 1;
+	return (is_psx_type == 1);
 }
 
 static int is_st_type = 0;
@@ -2647,9 +2654,7 @@ void user_io_poll()
 			int op = 0;
 			static uint8_t buffer[16][16384];
 			uint64_t lba;
-			uint32_t blkpow = 9;
-			uint32_t sz = 512;
-			uint32_t blksz = 1;
+			uint32_t blksz, blks, sz;
 
 			uint16_t c = spi_uio_cmd_cont(UIO_GET_SDSTAT);
 			if (c & 0x8000)
@@ -2660,14 +2665,16 @@ void user_io_poll()
 				spi_w(0);
 				lba = spi_w(0);
 				lba = (lba & 0xFFFF) | (((uint32_t)spi_w(0)) << 16);
-				blkpow = 7 + ((c >> 6) & 7);
-				blksz = (((c >> 9) & 0x3F) + 1);
-				sz = blksz << blkpow;
+				blks = ((c >> 9) & 0x3F) + 1;
+				blksz = (disk == 1 && is_psx()) ? 2352 : (128 << ((c >> 6) & 7));
+
+				sz = blksz * blks;
 				if (sz > sizeof(buffer[0]))
 				{
-					sz = sizeof(buffer[0]);
-					blksz = sz >> blkpow;
+					blks = sizeof(buffer[0]) / blksz;
+					sz = blksz * blks;
 				}
+
 				//if (op) printf("c=%X, op=%d, blkpow=%d, sz=%d, lba=%llu, disk=%d\n", c, op, blkpow, sz, lba, disk);
 			}
 			else
@@ -2708,10 +2715,14 @@ void user_io_poll()
 
 					ack = ((c & 4) ? 0 : ((disk + 1) << 8));
 				}
+
+				sz = 512;
+				blksz = 512;
+				blks = 1;
 			}
 			DisableIO();
 
-			if ((blksz == 32) && sd_type[disk])
+			if ((blks == 32) && sd_type[disk])
 			{
 				if (op == 2) c64_writeGCR(disk, lba);
 				else if (op & 1) c64_readGCR(disk, lba);
@@ -2737,7 +2748,7 @@ void user_io_poll()
 					if (FileOpenEx(&sd_image[disk], sd_image[disk].path, O_CREAT | O_RDWR | O_SYNC))
 					{
 						diskled_on();
-						if (FileWriteSec(&sd_image[disk], buffer[disk]))
+						if (FileWriteAdv(&sd_image[disk], buffer[disk], sz))
 						{
 							sd_image[disk].size = sz;
 						}
@@ -2750,11 +2761,11 @@ void user_io_poll()
 				else
 				{
 					// ... and write it to disk
-					uint64_t size = sd_image[disk].size >> blkpow;
-					if (size && lba <= size)
+					uint64_t size = sd_image[disk].size / blksz;
+					if (sz && lba <= size)
 					{
 						diskled_on();
-						if (FileSeek(&sd_image[disk], lba << blkpow, SEEK_SET))
+						if (FileSeek(&sd_image[disk], lba * blksz, SEEK_SET))
 						{
 							if (!sd_image_cangrow[disk])
 							{
@@ -2769,19 +2780,19 @@ void user_io_poll()
 			}
 			else if (op & 1)
 			{
-				uint32_t buf_n = sizeof(buffer[0]) >> blkpow;
-				//printf("SD RD (%llu,%d) on %d, WIDE=%d\n", lba, sz, disk, fio_size);
+				uint32_t buf_n = sizeof(buffer[0]) / blksz;
+				//printf("SD RD (%llu,%d) on %d, WIDE=%d\n", lba, blksz, disk, fio_size);
 
 				int done = 0;
 				uint32_t offset;
 
-				if ((buffer_lba[disk] == (uint64_t)-1) || lba < buffer_lba[disk] || (lba + blksz - buffer_lba[disk]) > buf_n)
+				if ((buffer_lba[disk] == (uint64_t)-1) || lba < buffer_lba[disk] || (lba + blks - buffer_lba[disk]) > buf_n)
 				{
 					buffer_lba[disk] = -1;
 					if (sd_image[disk].size)
 					{
 						diskled_on();
-						if (FileSeek(&sd_image[disk], lba << blkpow, SEEK_SET))
+						if (FileSeek(&sd_image[disk], lba * blksz, SEEK_SET))
 						{
 							if (FileReadAdv(&sd_image[disk], buffer[disk], sizeof(buffer[disk])))
 							{
@@ -2824,7 +2835,7 @@ void user_io_poll()
 				}
 				else
 				{
-					offset = (lba - buffer_lba[disk]) << blkpow;
+					offset = (lba - buffer_lba[disk]) * blksz;
 					done = 1;
 				}
 
@@ -2838,10 +2849,11 @@ void user_io_poll()
 				{
 					buffer_lba[disk] = -1;
 				}
-				else if(done && (lba + blksz - buffer_lba[disk]) == buf_n)
+				else if(done && (lba + blks - buffer_lba[disk]) == buf_n)
 				{
 					diskled_on();
-					if (FileReadAdv(&sd_image[disk], buffer[disk], sizeof(buffer[disk])))
+					if (FileSeek(&sd_image[disk], (lba + blks) * blksz, SEEK_SET) &&
+						FileReadAdv(&sd_image[disk], buffer[disk], sizeof(buffer[disk])))
 					{
 						buffer_lba[disk] += buf_n;
 					}
@@ -3444,10 +3456,11 @@ void user_io_kbd(uint16_t key, int press)
 	// Win+PrnScr or Alt/Win+ScrLk - screen shot
 	if ((key == KEY_SYSRQ && (get_key_mod() & (RGUI | LGUI))) || (key == KEY_SCROLLLOCK && (get_key_mod() & (LALT | RALT | RGUI | LGUI))))
 	{
+		int shift = (get_key_mod() & LSHIFT);
 		if (press == 1)
 		{
 			printf("print key pressed - do screen shot\n");
-			user_io_screenshot(nullptr);
+			user_io_screenshot(nullptr,!shift);
 		}
 	}
 	else
@@ -3608,7 +3621,37 @@ uint16_t user_io_get_sdram_cfg()
 	return sdram_cfg;
 }
 
-bool user_io_screenshot(const char *pngname)
+static struct { const char *fmtstr; Imlib_Load_Error errno; } err_strings[] = {
+  {"file '%s' does not exist", IMLIB_LOAD_ERROR_FILE_DOES_NOT_EXIST},
+  {"file '%s' is a directory", IMLIB_LOAD_ERROR_FILE_IS_DIRECTORY},
+  {"permission denied to read file '%s'", IMLIB_LOAD_ERROR_PERMISSION_DENIED_TO_READ},
+  {"no loader for the file format used in file '%s'", IMLIB_LOAD_ERROR_NO_LOADER_FOR_FILE_FORMAT},
+  {"path for file '%s' is too long", IMLIB_LOAD_ERROR_PATH_TOO_LONG},
+  {"a component of path '%s' does not exist", IMLIB_LOAD_ERROR_PATH_COMPONENT_NON_EXISTANT},
+  {"a component of path '%s' is not a directory", IMLIB_LOAD_ERROR_PATH_COMPONENT_NOT_DIRECTORY},
+  {"path '%s' has too many symbolic links", IMLIB_LOAD_ERROR_TOO_MANY_SYMBOLIC_LINKS},
+  {"ran out of file descriptors trying to access file '%s'", IMLIB_LOAD_ERROR_OUT_OF_FILE_DESCRIPTORS},
+  {"denied write permission for file '%s'", IMLIB_LOAD_ERROR_PERMISSION_DENIED_TO_WRITE},
+  {"out of disk space writing to file '%s'", IMLIB_LOAD_ERROR_OUT_OF_DISK_SPACE},
+  {(const char *)NULL, (Imlib_Load_Error) 0}
+};
+
+static void print_imlib_load_error (Imlib_Load_Error err, const char *filepath) {
+  int i;
+  for (i = 0; err_strings[i].fmtstr != NULL; i++) {
+    if (err == err_strings[i].errno) {
+	printf("Screenshot Error (%d): ",err);
+	printf(err_strings[i].fmtstr,filepath);
+	printf("\n");
+      return ;
+    }
+  }
+  /* Unrecognised error */
+    printf("Screenshot Error (%d): unrecognized error accessing file '%s'\n",err,filepath);
+  return ;
+}
+
+bool user_io_screenshot(const char *pngname, int rescale)
 {
 	mister_scaler *ms = mister_scaler_init();
 	if (ms == NULL)
@@ -3622,19 +3665,34 @@ bool user_io_screenshot(const char *pngname)
 		const char *basename = last_filename;
 		if( pngname && *pngname )
 			basename = pngname;
-		unsigned char *outputbuf = (unsigned char *)calloc(ms->width*ms->height * 3, 1);
-		mister_scaler_read(ms, outputbuf);
+		unsigned char *outputbuf = (unsigned char *)calloc(ms->width*ms->height * 4, 1);
+		// read the image into the outpubuf - RGBA format
+		mister_scaler_read_32(ms,outputbuf);
+		// using_data will keep a pointer and dispose of the outbuf
+		Imlib_Image im = imlib_create_image_using_data(ms->width,ms->height,(unsigned int *)outputbuf);
+		imlib_context_set_image(im);
+
 		static char filename[1024];
 		FileGenerateScreenshotName(basename, filename, 1024);
-		unsigned error = lodepng_encode24_file(getFullPath(filename), outputbuf, ms->width, ms->height);
-		if (error) {
-			printf("error %u: %s\n", error, lodepng_error_text(error));
-			printf("%s", filename);
+
+		/* do we want to save a rescaled image? */
+		if (rescale)
+		{
+			Imlib_Image im_scaled=imlib_create_cropped_scaled_image(0,0,ms->width,ms->height,ms->output_width,ms->output_height);
+			imlib_free_image_and_decache();
+			imlib_context_set_image(im_scaled);
+		}
+		Imlib_Load_Error error;
+		imlib_save_image_with_error_return(getFullPath(filename),&error);
+		if (error != IMLIB_LOAD_ERROR_NONE)
+		{
+			print_imlib_load_error (error, filename);
 			Info("error in saving png");
 			return false;
 		}
-		free(outputbuf);
+		imlib_free_image_and_decache();
 		mister_scaler_free(ms);
+		free(outputbuf);
 		char msg[1024];
 		snprintf(msg, 1024, "Screen saved to\n%s", filename + strlen(SCREENSHOT_DIR"/"));
 		Info(msg);
@@ -3653,5 +3711,5 @@ void user_io_screenshot_cmd(const char *cmd)
 	while( *cmd != '\0' && ( *cmd == '\t' || *cmd == ' ' || *cmd == '\n' ) )
 		cmd++;
 
-	user_io_screenshot(cmd);
+	user_io_screenshot(cmd,0);
 }
