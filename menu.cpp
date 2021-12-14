@@ -2025,6 +2025,8 @@ void HandleUI(void)
 							fs_Options |= SCANO_NOZIP;
 						}
 
+						if (is_psx()) fs_Options |= SCANO_NOZIP;
+
 						if (select) SelectFile(Selected_tmp, ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
 						else if(recent_init(ioctl_index + 500)) menustate = MENU_RECENT1;
 					}
@@ -2393,6 +2395,15 @@ void HandleUI(void)
 
 			if (recent_init(-1)) menustate = MENU_RECENT1;
 			break;
+		}
+
+		if (plus || minus)
+		{
+			if(menusub == 11)
+			{
+				video_set_shadow_mask_mode(video_get_shadow_mask_mode() + (plus ? 1 : -1));
+				menustate = MENU_COMMON1;
+			}
 		}
 
 		if (select)
