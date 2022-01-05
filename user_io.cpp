@@ -264,7 +264,7 @@ char is_c64()
 static int is_psx_type = 0;
 char is_psx()
 {
-	if (!is_psx_type) is_psx_type = strcasecmp(core_name, "PlayStation") ? 2 : 1;
+	if (!is_psx_type) is_psx_type = strcasecmp(core_name, "PSX") ? 2 : 1;
 	return (is_psx_type == 1);
 }
 
@@ -622,8 +622,19 @@ static void parse_config()
 				use_cheats = 1;
 			}
 
-			if (p[0] == 'F' && p[1] == 'C')
+			if (p[0] == 'F')
 			{
+				int opensave = 0;
+				int idx = 1;
+				if (p[idx] == 'S')
+				{
+					opensave = 1;
+					idx++;
+				}
+
+				if (p[idx] == 'C')
+				{
+					idx++;
 				static char str[1024];
 				uint32_t load_addr = 0;
 				if (substrcpy(str, p, 3))
@@ -636,13 +647,48 @@ static void parse_config()
 					}
 				}
 
-				sprintf(str, "%s.f%c", user_io_get_core_name(), p[2]);
+					sprintf(str, "%s.f%c", user_io_get_core_name(), p[idx]);
 				if (FileLoadConfig(str, str, sizeof(str)) && str[0])
 				{
 
-					int idx = p[2] - '0';
+						idx = p[idx] - '0';
 					StoreIdx_F(idx, str);
-					user_io_file_tx(str, idx, 0, 0, 0, load_addr);
+						user_io_file_tx(str, idx, opensave, 0, 0, load_addr);
+					}
+				}
+			}
+
+			if (p[0] == 'S' && p[1] == 'C')
+			{
+				static char str[1024];
+				sprintf(str, "%s.s%c", user_io_get_core_name(), p[2]);
+
+				static char ext[256];
+				substrcpy(ext, p, 1);
+				while (strlen(ext) % 3) strcat(ext, " ");
+
+				if (FileLoadConfig(str, str, sizeof(str)) && str[0])
+				{
+					int idx = p[2] - '0';
+					StoreIdx_S(idx, str);
+					if (is_x86())
+					{
+						x86_set_image(idx, str);
+					}
+					else if (is_megacd())
+					{
+						mcd_set_image(idx, str);
+					}
+					else if (is_pce())
+					{
+						pcecd_set_image(idx, str);
+						cheats_init(str, 0);
+					}
+					else
+					{
+						user_io_set_index(user_io_ext_idx(str, ext) << 6 | idx);
+						user_io_file_mount(str, idx);
+					}
 				}
 			}
 		}
@@ -1445,17 +1491,21 @@ static void kbd_fifo_poll()
 	kbd_fifo_r = (kbd_fifo_r + 1)&(KBD_FIFO_SIZE - 1);
 }
 
-static int process_ss(const char *rom_name)
+int process_ss(const char *rom_name, int enable)
 {
 	static char ss_name[1024] = {};
 	static char *ss_sufx = 0;
 	static uint32_t ss_cnt[4] = {};
 	static void *base[4] = {};
+	static int enabled = 0;
 
 	if (!ss_base) return 0;
 
 	if (rom_name)
 	{
+		enabled = enable;
+		if (!enabled) return 0;
+
 		uint32_t len = ss_size;
 		uint32_t map_addr = ss_base;
 		fileTYPE f = {};
@@ -1507,6 +1557,8 @@ static int process_ss(const char *rom_name)
 		ss_sufx = ss_name + strlen(ss_name) - 4;
 		return 1;
 	}
+
+	if (!enabled) return 0;
 
 	static unsigned long ss_timer = 0;
 	if (ss_timer && !CheckTimer(ss_timer)) return 0;
@@ -1620,14 +1672,6 @@ int user_io_file_mount(const char *name, unsigned char index, char pre)
 	int writable = 0;
 	int ret = 0;
 	int len = strlen(name);
-
-	if (index && is_psx())
-	{
-		static char buf[1024];
-		FileGenerateSavePath(name, buf);
-		user_io_file_mount(buf, 0, 1);
-		process_ss(name);
-	}
 
 	sd_image_cangrow[index] = (pre != 0);
 	sd_type[index] = 0;
