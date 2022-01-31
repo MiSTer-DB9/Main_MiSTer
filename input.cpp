@@ -1130,6 +1130,11 @@ void start_map_setting(int cnt, int set)
 	user_io_kbd(KEY_ENTER, 0);
 }
 
+int get_map_set()
+{
+	return mapping_set;
+}
+
 int get_map_button()
 {
 	return mapping_button;
@@ -3797,6 +3802,12 @@ int input_test(int getchar)
 
 						//Ultimarc lightgun
 						if (input[n].vid == 0xd209 && input[n].pid == 0x1601)
+						{
+							input[n].lightgun = 1;
+						}
+
+						//Namco GunCon 2
+						if (input[n].vid == 0x0b9a && input[n].pid == 0x016a)
 						{
 							input[n].lightgun = 1;
 						}
