@@ -59,6 +59,8 @@ static int brd_y = 0;
 static int menu_bg = 0;
 static int menu_bgn = 0;
 
+static VideoInfo current_video_info;
+
 struct vmode_t
 {
 	uint32_t vpar[8];
@@ -211,19 +213,47 @@ struct FilterPhase
 	short t[4];
 };
 
+static constexpr int N_PHASES = 256;
+
 struct VideoFilter
 {
 	bool is_adaptive;
-	FilterPhase phases[64];
-	FilterPhase adaptive_phases[64];
+	FilterPhase phases[N_PHASES];
+	FilterPhase adaptive_phases[N_PHASES];
 };
+
+static bool scale_phases(FilterPhase out_phases[N_PHASES], FilterPhase *in_phases, int in_count)
+{
+	if (!in_count)
+	{
+		return false;
+	}
+
+	int dup = N_PHASES / in_count;
+
+	if ((in_count * dup) != N_PHASES)
+	{
+		return false;
+	}
+
+	for (int i = 0; i < in_count; i++)
+	{
+		for (int j = 0; j < dup; j++)
+		{
+			out_phases[(i * dup) + j] = in_phases[i];
+		}
+	}
+
+	return true;
+}
 
 static bool read_video_filter(int type, VideoFilter *out)
 {
 	fileTextReader reader = {};
-	FilterPhase phases[128];
+	FilterPhase phases[512];
 	int count = 0;
 	bool is_adaptive = false;
+	int scale = 2;
 
 	static char filename[1024];
 	snprintf(filename, sizeof(filename), COEFF_DIR"/%s", scaler_flt[type].filename);
@@ -239,71 +269,79 @@ static bool read_video_filter(int type, VideoFilter *out)
 				continue;
 			}
 
+			if (count == 0 && !strcasecmp(line, "10bit"))
+			{
+				scale = 1;
+				continue;
+			}
+
 			int phase[4];
 			int n = sscanf(line, "%d,%d,%d,%d", &phase[0], &phase[1], &phase[2], &phase[3]);
 			if (n == 4)
 			{
-				if (count >= (is_adaptive ? 128 : 64)) return false; //too many
-				phases[count].t[0] = phase[0];
-				phases[count].t[1] = phase[1];
-				phases[count].t[2] = phase[2];
-				phases[count].t[3] = phase[3];
+				if (count >= (is_adaptive ? N_PHASES * 2 : N_PHASES)) return false; //too many
+				phases[count].t[0] = phase[0] * scale;
+				phases[count].t[1] = phase[1] * scale;
+				phases[count].t[2] = phase[2] * scale;
+				phases[count].t[3] = phase[3] * scale;
 				count++;
 			}
 		}
 	}
 
-	if (count == 128 && is_adaptive)
+	printf( "Filter \'%s\', phases: %d adaptive: %s\n",
+			scaler_flt[type].filename,
+			is_adaptive ? count / 2 : count,
+			is_adaptive ? "true" : "false" );
+
+	if (is_adaptive)
 	{
 		out->is_adaptive = true;
-		memcpy(out->phases, phases, sizeof(FilterPhase) * 64);
-		memcpy(out->adaptive_phases, phases + 64, sizeof(FilterPhase) * 64);
-		return true;
+		bool valid = scale_phases(out->phases, phases, count / 2);
+		valid = valid && scale_phases(out->adaptive_phases, phases + (count / 2), count / 2);
+		return valid;
 	}
-	else if (count == 64 && !is_adaptive)
+	else if (count == 32 && !is_adaptive) // legacy
 	{
 		out->is_adaptive = false;
-		memcpy(out->phases, phases, sizeof(FilterPhase) * 64);
-		return true;
+		return scale_phases(out->phases, phases, 16);
 	}
-	else if ((count == 32 || count == 16) && !is_adaptive)
+	else if (!is_adaptive)
 	{
 		out->is_adaptive = false;
-		for (int i = 0; i < 16; i++)
-		{
-			for (int j = 0; j < 4; j++)
-			{
-				out->phases[(i * 4) + j] = phases[i];
-			}
-		}
-		return true;
+		return scale_phases(out->phases, phases, count);
 	}
 
 	return false;
 }
 
-static void send_phases_legacy(int addr, const FilterPhase phases[64])
+static void send_phases_legacy(int addr, const FilterPhase phases[N_PHASES])
 {
-	for (int idx = 0; idx < 64; idx += 4)
+	for (int idx = 0; idx < N_PHASES; idx += 16)
 	{
 		const FilterPhase *p = &phases[idx];
-		spi_w((p->t[0] & 0x1FF) | ((addr + 0) << 9));
-		spi_w((p->t[1] & 0x1FF) | ((addr + 1) << 9));
-		spi_w((p->t[2] & 0x1FF) | ((addr + 2) << 9));
-		spi_w((p->t[3] & 0x1FF) | ((addr + 3) << 9));
+		spi_w(((p->t[0] >> 1) & 0x1FF) | ((addr + 0) << 9));
+		spi_w(((p->t[1] >> 1) & 0x1FF) | ((addr + 1) << 9));
+		spi_w(((p->t[2] >> 1) & 0x1FF) | ((addr + 2) << 9));
+		spi_w(((p->t[3] >> 1) & 0x1FF) | ((addr + 3) << 9));
 		addr += 4;
 	}
 }
 
-static void send_phases(int addr, const FilterPhase phases[64])
+static void send_phases(int addr, const FilterPhase phases[N_PHASES], bool full_precision)
 {
-	for (int idx = 0; idx < 64; idx++)
+	const int skip = full_precision ? 1 : 4;
+	const int shift = full_precision ? 0 : 1;
+
+	addr *= full_precision ? (N_PHASES * 4) : (64 * 4);
+
+	for (int idx = 0; idx < N_PHASES; idx += skip)
 	{
 		const FilterPhase *p = &phases[idx];
-		spi_w(addr + 0); spi_w(p->t[0] & 0x1FF);
-		spi_w(addr + 1); spi_w(p->t[1] & 0x1FF);
-		spi_w(addr + 2); spi_w(p->t[2] & 0x1FF);
-		spi_w(addr + 3); spi_w(p->t[3] & 0x1FF);
+		spi_w(addr + 0); spi_w((p->t[0] >> shift) & 0x3FF);
+		spi_w(addr + 1); spi_w((p->t[1] >> shift) & 0x3FF);
+		spi_w(addr + 2); spi_w((p->t[2] >> shift) & 0x3FF);
+		spi_w(addr + 3); spi_w((p->t[3] >> shift) & 0x3FF);
 		addr += 4;
 	}
 }
@@ -312,29 +350,33 @@ static void send_video_filters(const VideoFilter *horiz, const VideoFilter *vert
 {
 	spi_uio_cmd_cont(UIO_SET_FLTCOEF);
 
-	if (ver == 1)
-	{
-		send_phases_legacy(0, horiz->phases);
-		send_phases_legacy(64, vert->phases);
-	}
-	else if (ver == 2)
-	{
-		send_phases(0, horiz->phases);
-		send_phases(64 * 4, vert->phases);
-	}
-	else if (ver == 3)
-	{
-		send_phases(0, horiz->phases);
-		send_phases(64 * 4, vert->phases);
+	const bool full_precision = (ver & 0x4) != 0;
 
-		if (horiz->is_adaptive)
-		{
-			send_phases(64 * 8, horiz->adaptive_phases);
-		}
-		else if (vert->is_adaptive)
-		{
-			send_phases(64 * 12, vert->adaptive_phases);
-		}
+	switch( ver & 0x3 )
+	{
+		case 1:
+			send_phases_legacy(0, horiz->phases);
+			send_phases_legacy(64, vert->phases);
+			break;
+		case 2:
+			send_phases(0, horiz->phases, full_precision);
+			send_phases(1, vert->phases, full_precision);
+			break;
+		case 3:
+			send_phases(0, horiz->phases, full_precision);
+			send_phases(1, vert->phases, full_precision);
+
+			if (horiz->is_adaptive)
+			{
+				send_phases(2, horiz->adaptive_phases, full_precision);
+			}
+			else if (vert->is_adaptive)
+			{
+				send_phases(3, vert->adaptive_phases, full_precision);
+			}
+			break;
+		default:
+			break;
 	}
 
 	DisableIO();
@@ -592,7 +634,7 @@ static void setShadowMask()
 	}
 
 	has_shadow_mask = 1;
-	switch( video_get_shadow_mask_mode() )
+	switch (video_get_shadow_mask_mode())
 	{
 		default: spi_w(SM_FLAG(0)); break;
 		case SM_MODE_1X: spi_w(SM_FLAG(SM_FLAG_ENABLED)); break;
@@ -1033,111 +1075,160 @@ int hasAPI1_5()
 	return api1_5 || is_menu();
 }
 
-static uint32_t show_video_info(int force)
+static bool get_video_info(bool force, VideoInfo *video_info)
 {
-	uint32_t ret = 0;
 	static uint16_t nres = 0;
+	bool changed = false;
+
 	spi_uio_cmd_cont(UIO_GET_VRES);
 	uint16_t res = spi_w(0);
 	if ((nres != res) || force)
 	{
-		if (nres != res) force = 0;
+		changed = (nres != res);
 		nres = res;
-		uint32_t width = spi_w(0) | (spi_w(0) << 16);
-		uint32_t height = spi_w(0) | (spi_w(0) << 16);
-		uint32_t htime = spi_w(0) | (spi_w(0) << 16);
-		uint32_t vtime = spi_w(0) | (spi_w(0) << 16);
-		uint32_t ptime = spi_w(0) | (spi_w(0) << 16);
-		uint32_t vtimeh = spi_w(0) | (spi_w(0) << 16);
-		DisableIO();
-
-		float vrate = 100000000;
-		if (vtime) vrate /= vtime; else vrate = 0;
-		float hrate = 100000;
-		if (htime) hrate /= htime; else hrate = 0;
-
-		float prate = width * 100;
-		prate /= ptime;
-
-		printf("\033[1;33mINFO: Video resolution: %u x %u%s, fHorz = %.1fKHz, fVert = %.1fHz, fPix = %.2fMHz\033[0m\n", width, height, (res & 0x100) ? "i" : "", hrate, vrate, prate);
-		printf("\033[1;33mINFO: Frame time (100MHz counter): VGA = %d, HDMI = %d\033[0m\n", vtime, vtimeh);
-
-		if (vtimeh) api1_5 = 1;
-		if (hasAPI1_5() && cfg.video_info)
-		{
-			static char str[128], res1[16], res2[16];
-			float vrateh = 100000000;
-			if (vtimeh) vrateh /= vtimeh; else vrateh = 0;
-			sprintf(res1, "%dx%d%s", width, height, (res & 0x100) ? "i" : "");
-			sprintf(res2, "%dx%d", v_cur.item[1], v_cur.item[5]);
-			sprintf(str, "%9s %6.2fKHz %4.1fHz\n" \
-				         "\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\n" \
-				         "%9s %6.2fMHz %4.1fHz",
-				res1,  hrate, vrate, res2, v_cur.Fpix, vrateh);
-			Info(str, cfg.video_info * 1000);
-		}
-
-		uint32_t scrh = v_cur.item[5];
-		if (scrh)
-		{
-			if (cfg.vscale_mode && height)
-			{
-				uint32_t div = 1 << (cfg.vscale_mode - 1);
-				uint32_t mag = (scrh*div) / height;
-				scrh = (height * mag) / div;
-				printf("Set vertical scaling to : %d\n", scrh);
-				spi_uio_cmd16(UIO_SETHEIGHT, scrh);
-			}
-			else if(cfg.vscale_border)
-			{
-				uint32_t border = cfg.vscale_border * 2;
-				if ((border + 100) > scrh) border = scrh - 100;
-				scrh -= border;
-				printf("Set max vertical resolution to : %d\n", scrh);
-				spi_uio_cmd16(UIO_SETHEIGHT, scrh);
-			}
-			else
-			{
-				spi_uio_cmd16(UIO_SETHEIGHT, 0);
-			}
-		}
-
-		uint32_t scrw = v_cur.item[1];
-		if (scrw)
-		{
-			if (cfg.vscale_border && !(cfg.vscale_mode && height))
-			{
-				uint32_t border = cfg.vscale_border * 2;
-				if ((border + 100) > scrw) border = scrw - 100;
-				scrw -= border;
-				printf("Set max horizontal resolution to : %d\n", scrw);
-				spi_uio_cmd16(UIO_SETWIDTH, scrw);
-			}
-			else
-			{
-				spi_uio_cmd16(UIO_SETWIDTH, 0);
-			}
-		}
-
-		if (vtime && vtimeh) ret = vtime;
-		minimig_set_adjust(2);
+		video_info->width = spi_w(0) | (spi_w(0) << 16);
+		video_info->height = spi_w(0) | (spi_w(0) << 16);
+		video_info->htime = spi_w(0) | (spi_w(0) << 16);
+		video_info->vtime = spi_w(0) | (spi_w(0) << 16);
+		video_info->ptime = spi_w(0) | (spi_w(0) << 16);
+		video_info->vtimeh = spi_w(0) | (spi_w(0) << 16);
+		video_info->interlaced = ( res & 0x100 ) != 0;
+		video_info->rotated = ( res & 0x200 ) != 0;
 	}
-	else
+
+	DisableIO();
+
+	return changed;
+}
+
+static void video_core_description(const VideoInfo *vi, const vmode_custom_t * /*vm*/, char *str, size_t len)
+{
+	float vrate = 100000000;
+	if (vi->vtime) vrate /= vi->vtime; else vrate = 0;
+	float hrate = 100000;
+	if (vi->htime) hrate /= vi->htime; else hrate = 0;
+
+	float prate = vi->width * 100;
+	prate /= vi->ptime;
+
+	char res[16];
+	snprintf(res, 16, "%dx%d%s", vi->width, vi->height, vi->interlaced ? "i" : "");
+	snprintf(str, len, "%9s %6.2fKHz %5.1fHz", res, hrate, vrate);
+}
+
+static void video_scaler_description(const VideoInfo *vi, const vmode_custom_t *vm, char *str, size_t len)
+{
+	char res[16];
+	float vrateh = 100000000;
+	if (vi->vtimeh) vrateh /= vi->vtimeh; else vrateh = 0;
+	snprintf(res, 16, "%dx%d", vm->item[1], vm->item[5]);
+	snprintf(str, len, "%9s %6.2fMHz %5.1fHz", res, vm->Fpix, vrateh);
+}
+
+void video_core_description(char *str, size_t len)
+{
+	video_core_description(&current_video_info, &v_cur, str, len);
+}
+
+void video_scaler_description(char *str, size_t len)
+{
+	video_scaler_description(&current_video_info, &v_cur, str, len);
+}
+
+static void show_video_info(const VideoInfo *vi, const vmode_custom_t *vm)
+{
+	float vrate = 100000000;
+	if (vi->vtime) vrate /= vi->vtime; else vrate = 0;
+	float hrate = 100000;
+	if (vi->htime) hrate /= vi->htime; else hrate = 0;
+
+	float prate = vi->width * 100;
+	prate /= vi->ptime;
+
+	printf("\033[1;33mINFO: Video resolution: %u x %u%s, fHorz = %.1fKHz, fVert = %.1fHz, fPix = %.2fMHz\033[0m\n",
+		vi->width, vi->height, vi->interlaced ? "i" : "", hrate, vrate, prate);
+	printf("\033[1;33mINFO: Frame time (100MHz counter): VGA = %d, HDMI = %d\033[0m\n", vi->vtime, vi->vtimeh);
+	if (vi->vtimeh) api1_5 = 1;
+	if (hasAPI1_5() && cfg.video_info)
 	{
-		DisableIO();
+		char str[128], res1[64], res2[64];
+		video_core_description(vi, vm, res1, 64);
+		video_scaler_description(vi, vm, res2, 64);
+		snprintf(str, 128, "%s\n" \
+						"\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\n" \
+						"%s", res1, res2);
+		Info(str, cfg.video_info * 1000);
+	}
+}
+
+static void video_scaling_adjust(const VideoInfo *vi)
+{
+	const uint32_t height = vi->rotated ? vi->width : vi->height;
+
+	uint32_t scrh = v_cur.item[5];
+	if (scrh)
+	{
+		if (cfg.vscale_mode && height)
+		{
+			uint32_t div = 1 << (cfg.vscale_mode - 1);
+			uint32_t mag = (scrh*div) / height;
+			scrh = (height * mag) / div;
+			printf("Set vertical scaling to : %d\n", scrh);
+			spi_uio_cmd16(UIO_SETHEIGHT, scrh);
+		}
+		else if(cfg.vscale_border)
+		{
+			uint32_t border = cfg.vscale_border * 2;
+			if ((border + 100) > scrh) border = scrh - 100;
+			scrh -= border;
+			printf("Set max vertical resolution to : %d\n", scrh);
+			spi_uio_cmd16(UIO_SETHEIGHT, scrh);
+		}
+		else
+		{
+			spi_uio_cmd16(UIO_SETHEIGHT, 0);
+		}
 	}
 
-	return force ? 0 : ret;
+	uint32_t scrw = v_cur.item[1];
+	if (scrw)
+	{
+		if (cfg.vscale_border && !(cfg.vscale_mode && height))
+		{
+			uint32_t border = cfg.vscale_border * 2;
+			if ((border + 100) > scrw) border = scrw - 100;
+			scrw -= border;
+			printf("Set max horizontal resolution to : %d\n", scrw);
+			spi_uio_cmd16(UIO_SETWIDTH, scrw);
+		}
+		else
+		{
+			spi_uio_cmd16(UIO_SETWIDTH, 0);
+		}
+	}
+
+	minimig_set_adjust(2);
 }
 
 void video_mode_adjust()
 {
-	static int force = 0;
+	static bool force = false;
 
-	uint32_t vtime = show_video_info(force);
-	force = 0;
+	VideoInfo video_info;
 
-	if (vtime && cfg.vsync_adjust && !is_menu())
+	const bool vid_changed = get_video_info(force, &video_info);
+
+	if (vid_changed || force)
+	{
+		show_video_info(&video_info, &v_cur);
+		video_scaling_adjust(&video_info);
+
+		current_video_info = video_info;
+	}
+	force = false;
+
+	const uint32_t vtime = video_info.vtime;
+	if (vid_changed && vtime && cfg.vsync_adjust && !is_menu())
 	{
 		printf("\033[1;33madjust_video_mode(%u): vsync_adjust=%d", vtime, cfg.vsync_adjust);
 
@@ -1204,7 +1295,7 @@ void video_mode_adjust()
 
 		set_video(v, Fpix);
 		user_io_send_buttons(1);
-		force = 1;
+		force = true;
 	}
 	else
 	{
@@ -1277,7 +1368,7 @@ void video_fb_enable(int enable, int n)
 
 		DisableIO();
 		if (cfg.direct_video) set_vga_fb(enable);
-		if (is_menu()) user_io_8bit_set_status((fb_enabled && !fb_num) ? 0x160 : 0, 0x1E0);
+		if (is_menu()) user_io_status((fb_enabled && !fb_num) ? 0x160 : 0, 0x1E0);
 	}
 }
 
@@ -1941,4 +2032,9 @@ void video_cmd(char *cmd)
 			printf("video_cmd: unknown command or format.\n");
 		}
 	}
+}
+
+bool video_is_rotated()
+{
+	return current_video_info.rotated;
 }

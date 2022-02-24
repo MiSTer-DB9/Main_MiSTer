@@ -195,11 +195,11 @@ char user_io_user_button();
 void user_io_osd_key_enable(char);
 void user_io_read_confstr();
 char *user_io_get_confstr(int index);
-uint32_t user_io_8bit_set_status(uint32_t, uint32_t, int ex = 0);
+uint32_t user_io_status(uint32_t, uint32_t, int ex = 0);
 int user_io_get_kbd_reset();
 
 uint32_t user_io_get_file_crc();
-int  user_io_file_mount(const char *name, unsigned char index = 0, char pre = 0);
+int  user_io_file_mount(const char *name, unsigned char index = 0, char pre = 0, int pre_size = 0);
 char *user_io_make_filepath(const char *path, const char *filename);
 char *user_io_get_core_name(int orig = 0);
 char *user_io_get_core_path(const char *suffix = NULL, int recheck = 0);

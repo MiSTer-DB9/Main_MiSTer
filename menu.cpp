@@ -376,7 +376,7 @@ void SelectFile(const char* path, const char* pFileExt, int Options, unsigned ch
 			if(strlen(selPath)) strcat(selPath, "/");
 			strcat(selPath, get_rbf_name());
 		}
-		pFileExt = "RBFMRA";
+		pFileExt = "RBFMRAMGL";
 		home_dir = NULL;
 	}
 	else if (Options & SCANO_TXT)
@@ -686,14 +686,10 @@ static void printSysInfo()
 		sysinfo_timer = GetTimer(2000);
 		struct battery_data_t bat;
 		int hasbat = getBattery(0, &bat);
-		int n = 3;
+		int n = 2;
 
 		char str[40];
 		OsdWrite(n++, info_top, 0, 0);
-		if (!hasbat)
-		{
-			infowrite(n++, "");
-		}
 
 		int j = 0;
 		char *net;
@@ -716,6 +712,8 @@ static void printSysInfo()
 
 		if (hasbat)
 		{
+			infowrite(n++, "");
+
 			sprintf(str, "\x1F ");
 			if (bat.capacity == -1) strcat(str, "n/a");
 			else sprintf(str + strlen(str), "%d%%", bat.capacity);
@@ -752,6 +750,10 @@ static void printSysInfo()
 		else
 		{
 			infowrite(n++, "");
+			video_core_description(str, 40);
+			infowrite(n++, str);
+			video_scaler_description(str, 40);
+			infowrite(n++, str);
 		}
 		OsdWrite(n++, info_bottom, 0, 0);
 	}
@@ -787,7 +789,7 @@ const char* get_rbf_name_bootcore(char *str)
 	if (!p) return str;
 
 	char *spl = strrchr(p + 1, '.');
-	if (spl && (!strcmp(spl, ".rbf") || !strcmp(spl, ".mra")))
+	if (spl && (!strcmp(spl, ".rbf") || !strcmp(spl, ".mra") || !strcmp(spl, ".mgl")))
 	{
 		*spl = 0;
 	}
@@ -1014,10 +1016,34 @@ void HandleUI(void)
 	static int store_name;
 	static int vfilter_type;
 
+	static int mgl_done = 0;
+	static int mgl_active = 0;
+	static int mgl_submenu = -1;
+
 	static char	cp_MenuCancel;
 
-	// get user control codes
-	uint32_t c = menu_key_get();
+	uint32_t c = 0;
+
+	if (!mgl_done)
+	{
+		mgl_struct *mgl = mgl_get();
+		if (mgl->valid != 0xF ||
+			is_menu() || is_minimig() || is_st() || is_archie()
+			|| user_io_core_type() == CORE_TYPE_SHARPMZ) mgl_done = 1;
+		else
+		{
+			if (mgl->timer && CheckTimer(mgl->timer))
+			{
+				mgl_active = 1;
+				mgl_done = 1;
+			}
+		}
+	}
+	else if(!mgl_active)
+	{
+		// get user control codes
+		c = menu_key_get();
+	}
 
 	int release = 0;
 	if (c & UPSTROKE) release = 1;
@@ -1048,13 +1074,13 @@ void HandleUI(void)
 				if (menu_visible > 0)
 				{
 					menu_visible = 0;
-					video_menu_bg((user_io_8bit_set_status(0, 0) & 0xE) >> 1, 1);
+					video_menu_bg((user_io_status(0, 0) & 0xE) >> 1, 1);
 					OsdMenuCtl(0);
 				}
 				else if (!menu_visible)
 				{
 					menu_visible--;
-					video_menu_bg((user_io_8bit_set_status(0, 0) & 0xE) >> 1, 2);
+					video_menu_bg((user_io_status(0, 0) & 0xE) >> 1, 2);
 				}
 			}
 
@@ -1065,7 +1091,7 @@ void HandleUI(void)
 				{
 					c = 0;
 					menu_visible = 1;
-					video_menu_bg((user_io_8bit_set_status(0, 0) & 0xE) >> 1);
+					video_menu_bg((user_io_status(0, 0) & 0xE) >> 1);
 					OsdMenuCtl(1);
 				}
 			}
@@ -1090,15 +1116,15 @@ void HandleUI(void)
 		case KEY_F12:
 			menu = true;
 			menu_key_set(KEY_F12 | UPSTROKE);
-			if(video_fb_state()) video_menu_bg((user_io_8bit_set_status(0, 0) & 0xE) >> 1);
+			if(video_fb_state()) video_menu_bg((user_io_status(0, 0) & 0xE) >> 1);
 			video_fb_enable(0);
 			break;
 
 		case KEY_F1:
 			if (is_menu() && cfg.fb_terminal)
 			{
-				unsigned long status = (user_io_8bit_set_status(0, 0)+ 2) & 0xE;
-				user_io_8bit_set_status(status, 0xE);
+				unsigned long status = (user_io_status(0, 0)+ 2) & 0xE;
+				user_io_status(status, 0xE);
 				FileSaveConfig(user_io_create_config_name(), &status, 4);
 				video_menu_bg(status >> 1);
 			}
@@ -1294,7 +1320,7 @@ void HandleUI(void)
 		if (CheckTimer(menu_timer)) menustate = MENU_NONE1;
 		// fall through
 	case MENU_NONE2:
-		if (menu || (is_menu() && !video_fb_state()))
+		if (menu || (is_menu() && !video_fb_state()) || mgl_active)
 		{
 			OsdSetSize(16);
 			if(!is_menu() && (get_key_mod() & (LALT | RALT))) //Alt+Menu
@@ -1332,7 +1358,8 @@ void HandleUI(void)
 			}
 			menusub = 0;
 			OsdClear();
-			OsdEnable(DISABLE_KEYBOARD);
+			if (mgl_active) OsdDisable();
+			else OsdEnable(DISABLE_KEYBOARD);
 		}
 		break;
 
@@ -1663,7 +1690,13 @@ void HandleUI(void)
 						{
 							if (p[0] == 'S') s_entry = selentry;
 							substrcpy(s, p, 2);
-							int num = (p[1] >= '0' && p[1] <= '9') ? p[1] - '0' : 0;
+							int idx = 1;
+
+							if (p[idx] == 'S') idx++;
+							if (p[idx] == 'C') idx++;
+
+							int num = (p[idx] >= '0' && p[idx] <= '9') ? p[idx] - '0' : 0;
+							if (mgl_active && num == mgl_get()->index && (p[0] == mgl_get()->type)) mgl_submenu = selentry;
 
 							if (is_x86() && x86_get_image_name(num))
 							{
@@ -1736,7 +1769,7 @@ void HandleUI(void)
 						if ((p[0] == 'O') || (p[0] == 'o'))
 						{
 							int ex = (p[0] == 'o');
-							uint32_t status = user_io_8bit_set_status(0, 0, ex);  // 0,0 gets status
+							uint32_t status = user_io_status(0, 0, ex);  // 0,0 gets status
 
 							//option handled by ARM
 							if (p[1] == 'X') p++;
@@ -1752,7 +1785,7 @@ void HandleUI(void)
 								// option's index is outside of available values.
 								// reset to 0.
 								x = 0;
-								//user_io_8bit_set_status(setStatus(p, status, x), 0xffffffff);
+								//user_io_status(setStatus(p, status, x), 0xffffffff);
 								substrcpy(s, p, 2 + x);
 								l = strlen(s);
 								arc = get_arc(s);
@@ -1864,6 +1897,9 @@ void HandleUI(void)
 	case MENU_GENERIC_MAIN2:
 		saved_menustate = MENU_GENERIC_MAIN1;
 
+		// F/S option not found -> deactivate mgl.
+		if (mgl_active && mgl_submenu < 0) mgl_active = 0;
+
 		if (menu_save_timer && !CheckTimer(menu_save_timer))
 		{
 			for (int i = 0; i < 16; i++) OsdWrite(m++);
@@ -1890,8 +1926,14 @@ void HandleUI(void)
 				page = 0;
 			}
 		}
-		else if (select || recent || minus || plus)
+		else if (select || recent || minus || plus || mgl_active)
 		{
+			if (mgl_active)
+			{
+				menusub = mgl_submenu;
+				select = 1;
+			}
+
 			if ((dip_submenu == menusub || dip2_submenu == menusub) && select)
 			{
 				dipv = (dip_submenu == menusub) ? 0 : 1;
@@ -2001,8 +2043,9 @@ void HandleUI(void)
 							}
 						}
 
-						if (select) SelectFile(Selected_F[ioctl_index & 15], ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
-						else if(recent_init(ioctl_index)) menustate = MENU_RECENT1;
+						if (mgl_active) menustate = MENU_GENERIC_FILE_SELECTED;
+						else if (select) SelectFile(Selected_F[ioctl_index & 15], ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
+						else if (recent_init(ioctl_index)) menustate = MENU_RECENT1;
 					}
 					else if (p[0] == 'S' && (select || recent))
 					{
@@ -2050,8 +2093,9 @@ void HandleUI(void)
 
 						if (is_psx()) fs_Options |= SCANO_NOZIP;
 
-						if (select) SelectFile(Selected_tmp, ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
-						else if(recent_init(ioctl_index + 500)) menustate = MENU_RECENT1;
+						if (mgl_active) menustate = MENU_GENERIC_IMAGE_SELECTED;
+						else if (select) SelectFile(Selected_tmp, ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
+						else if (recent_init(ioctl_index + 500)) menustate = MENU_RECENT1;
 					}
 					else if (select || minus || plus)
 					{
@@ -2081,7 +2125,7 @@ void HandleUI(void)
 								p++;
 							}
 
-							uint32_t status = user_io_8bit_set_status(0, 0, ex);  // 0,0 gets status
+							uint32_t status = user_io_status(0, 0, ex);  // 0,0 gets status
 							uint32_t x = minus ? (getStatus(p, status) - 1) : (getStatus(p, status) + 1);
 							uint32_t mask = getStatusMask(p);
 							x &= mask;
@@ -2104,7 +2148,7 @@ void HandleUI(void)
 								if (!strlen(s) || get_arc(s) < 0) x = 0;
 							}
 
-							user_io_8bit_set_status(setStatus(p, status, x), 0xffffffff, ex);
+							user_io_status(setStatus(p, status, x), 0xffffffff, ex);
 
 							if (is_x86() && p[1] == 'A')
 							{
@@ -2143,10 +2187,10 @@ void HandleUI(void)
 
 								if (is_pce() && mask == 1) pcecd_reset();
 
-								uint32_t status = user_io_8bit_set_status(0, 0, ex);
+								uint32_t status = user_io_status(0, 0, ex);
 
-								user_io_8bit_set_status(status ^ mask, mask, ex);
-								user_io_8bit_set_status(status, mask, ex);
+								user_io_status(status ^ mask, mask, ex);
+								user_io_status(status, mask, ex);
 								menustate = MENU_GENERIC_MAIN1;
 								if (p[0] == 'R' || p[0] == 'r') menustate = MENU_NONE1;
 							}
@@ -2181,9 +2225,14 @@ void HandleUI(void)
 
 	case MENU_GENERIC_FILE_SELECTED:
 		{
+			if (mgl_active) snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), mgl_get()->path);
+
 			MenuHide();
 			printf("File selected: %s\n", selPath);
 			memcpy(Selected_F[ioctl_index & 15], selPath, sizeof(Selected_F[ioctl_index & 15]));
+
+			if (!mgl_active && selPath[0]) recent_update(SelectedDir, Selected_F[ioctl_index & 15], SelectedLabel, ioctl_index);
+			mgl_active = 0;
 
 			if (store_name)
 			{
@@ -2215,14 +2264,14 @@ void HandleUI(void)
 				}
 
 				if (addon[0] == 'f' && addon[1] == '1') process_addon(addon, idx);
-
-				recent_update(SelectedDir, Selected_F[ioctl_index & 15], SelectedLabel, ioctl_index);
 			}
 		}
 		break;
 
 	case MENU_GENERIC_IMAGE_SELECTED:
 		{
+			if (mgl_active) snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), mgl_get()->path);
+
 			if (store_name)
 			{
 				char str[64];
@@ -2235,6 +2284,8 @@ void HandleUI(void)
 
 			printf("Image selected: %s\n", selPath);
 			memcpy(Selected_S[(int)ioctl_index], selPath, sizeof(Selected_S[(int)ioctl_index]));
+			if (!mgl_active) recent_update(SelectedDir, Selected_S[(int)ioctl_index], SelectedLabel, ioctl_index + 500);
+			mgl_active = 0;
 
 			char idx = user_io_ext_idx(selPath, fs_pFileExt) << 6 | ioctl_index;
 			if (addon[0] == 'f' && addon[1] != '1') process_addon(addon, idx);
@@ -2255,6 +2306,7 @@ void HandleUI(void)
 			else if (is_psx() && ioctl_index == 1)
 			{
 				psx_mount_cd(user_io_ext_idx(selPath, fs_pFileExt) << 6 | (menusub + 1), ioctl_index, selPath);
+				cheats_init(selPath, 0);
 			}
 			else
 			{
@@ -2263,8 +2315,6 @@ void HandleUI(void)
 			}
 
 			if (addon[0] == 'f' && addon[1] == '1') process_addon(addon, idx);
-
-			recent_update(SelectedDir, Selected_S[(int)ioctl_index], SelectedLabel, ioctl_index + 500);
 		}
 		break;
 
@@ -2479,7 +2529,7 @@ void HandleUI(void)
 				else
 				{
 					char *filename = user_io_create_config_name();
-					uint32_t status[2] = { user_io_8bit_set_status(0, 0, 0), user_io_8bit_set_status(0, 0, 1) };
+					uint32_t status[2] = { user_io_status(0, 0, 0), user_io_status(0, 0, 1) };
 					printf("Saving config to %s\n", filename);
 					FileSaveConfig(filename, status, 8);
 					if (is_x86()) x86_config_save();
@@ -2847,8 +2897,8 @@ void HandleUI(void)
 				if (!dipv)
 				{
 					arcade_sw_save(dipv);
-					user_io_8bit_set_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
-					user_io_8bit_set_status(0, UIO_STATUS_RESET);
+					user_io_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
+					user_io_status(0, UIO_STATUS_RESET);
 					menustate = MENU_NONE1;
 				}
 				else
@@ -3136,7 +3186,7 @@ void HandleUI(void)
 	case MENU_SFONT_FILE_SELECTED:
 		{
 			printf("MENU_SFONT_FILE_SELECTED --> '%s'\n", selPath);
-			sprintf(Selected_tmp, "/sbin/mlinkutil FSSFONT /media/fat/\"%s\"", selPath);
+			snprintf(Selected_tmp, sizeof(Selected_tmp), "/sbin/mlinkutil FSSFONT /media/fat/\"%s\"", selPath);
 			system(Selected_tmp);
 			AdjustDirectory(selPath);
 			// MENU_FILE_SELECT1 to file select OSD
@@ -3285,6 +3335,7 @@ void HandleUI(void)
 		helptext_idx = 0;
 		menumask = 0xF;
 		menustate = MENU_MISC2;
+		sysinfo_timer = 0; // force refresh
 		OsdSetTitle("Misc. Options", OSD_ARROW_RIGHT);
 
 		if (parentstate != MENU_MISC1)
@@ -4966,7 +5017,7 @@ void HandleUI(void)
 			else
 			{
 				char *filename = user_io_create_config_name();
-				uint32_t status[2] = { user_io_8bit_set_status(0, 0xffffffff, 0), user_io_8bit_set_status(0, 0xffffffff, 1) };
+				uint32_t status[2] = { user_io_status(0, 0xffffffff, 0), user_io_status(0, 0xffffffff, 1) };
 				printf("Saving config to %s\n", filename);
 				FileSaveConfig(filename, status, 8);
 				menustate = MENU_GENERIC_MAIN1;
@@ -4976,8 +5027,8 @@ void HandleUI(void)
 					{
 						arcade_sw(n)->dip_cur = arcade_sw(n)->dip_def;
 						arcade_sw_send(n);
-						user_io_8bit_set_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
-						user_io_8bit_set_status(0, UIO_STATUS_RESET);
+						user_io_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
+						user_io_status(0, UIO_STATUS_RESET);
 						arcade_sw_save(n);
 					}
 				}
@@ -6186,7 +6237,7 @@ void HandleUI(void)
 		{
 			if (c & UPSTROKE)
 			{
-				video_menu_bg((user_io_8bit_set_status(0, 0) & 0xE) >> 1);
+				video_menu_bg((user_io_status(0, 0) & 0xE) >> 1);
 				video_fb_enable(0);
 				menustate = MENU_SYSTEM1;
 				menusub = 3;
@@ -6396,10 +6447,10 @@ void HandleUI(void)
 			}
 		}
 
-		if (!strcasecmp(".mra",&(Selected_tmp[strlen(Selected_tmp) - 4])))
+		if (isXmlName(Selected_tmp))
 		{
 			// find the RBF file from the XML
-			arcade_load(getFullPath(Selected_tmp));
+			xml_load(getFullPath(Selected_tmp));
 		}
 		else
 		{
@@ -6467,7 +6518,7 @@ void HandleUI(void)
 						OsdWrite(14, s, 1, 0, 0, 0);
 						sprintf(str, "           Loading...");
 						OsdWrite(15, str, 1, 0);
-						isMraName(cfg.bootcore) ? arcade_load(getFullPath(cfg.bootcore)) : fpga_load_rbf(cfg.bootcore);
+						isXmlName(cfg.bootcore) ? xml_load(getFullPath(cfg.bootcore)) : fpga_load_rbf(cfg.bootcore);
 					}
 				}
 			}
