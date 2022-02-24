@@ -598,7 +598,7 @@ static void parse_config()
 
 			if (p[0] == 'O' && p[1] == 'X')
 			{
-				uint32_t status = user_io_8bit_set_status(0, 0);
+				uint32_t status = user_io_status(0, 0);
 				printf("found OX option: %s, 0x%08X\n", p, status);
 
 				unsigned long x = getStatus(p + 1, status);
@@ -1084,7 +1084,7 @@ void user_io_init(const char *path, const char *xml)
 
 	OsdSetSize(8);
 
-	if (xml)
+	if (xml && isXmlName(xml) == 1)
 	{
 		is_arcade_type = 1;
 		arcade_override_name(xml);
@@ -1096,7 +1096,7 @@ void user_io_init(const char *path, const char *xml)
 		spi_uio_cmd16(UIO_SET_MEMSZ, sdram_sz(-1));
 
 		// send a reset
-		user_io_8bit_set_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
+		user_io_status(UIO_STATUS_RESET, UIO_STATUS_RESET);
 	}
 	else if (core_type == CORE_TYPE_SHARPMZ)
 	{
@@ -1105,18 +1105,31 @@ void user_io_init(const char *path, const char *xml)
 
 	user_io_read_confstr();
 	user_io_read_core_name();
+
+	cfg_parse();
+	while (cfg.waitmount[0] && !is_menu())
+	{
+		printf("> > > wait for %s mount < < <\n", cfg.waitmount);
+		static char str[256];
+		snprintf(str, sizeof(str), "exit $(mount | grep \"%s\" | wc -c)", cfg.waitmount);
+		int ret = system(str);
+		if (!(ret & 0xFF) && ret) break;
+		sleep(1);
+	}
+
 	parse_config();
 	if (!xml && defmra[0] && FileExists(defmra))
 	{
 		// attn: FC option won't use name from defmra!
+		// attn: cfg is parsed before defmra, no defmra-name specifics possible in INI!
 		xml = (const char*)defmra;
 		strcpy(core_path, xml);
 		is_arcade_type = 1;
 		arcade_override_name(xml);
+		user_io_read_core_name();
 		printf("Using default MRA: %s\n", xml);
 	}
 
-	cfg_parse();
 	if (cfg.log_file_entry) MakeFile("/tmp/STARTPATH", core_path);
 
 	if (cfg.bootcore[0] != '\0')
@@ -1129,6 +1142,7 @@ void user_io_init(const char *path, const char *xml)
 	load_volume();
 
 	user_io_send_buttons(1);
+	if (xml && isXmlName(xml) == 2) mgl_parse(xml);
 
 	switch (core_type)
 	{
@@ -1163,8 +1177,8 @@ void user_io_init(const char *path, const char *xml)
 				}
 
 				status[0] &= ~UIO_STATUS_RESET;
-				user_io_8bit_set_status(status[0], ~UIO_STATUS_RESET, 0);
-				user_io_8bit_set_status(status[1], 0xffffffff, 1);
+				user_io_status(status[0], ~UIO_STATUS_RESET, 0);
+				user_io_status(status[1], 0xffffffff, 1);
 			}
 
 			if (is_st())
@@ -1174,13 +1188,13 @@ void user_io_init(const char *path, const char *xml)
 			}
 			else if (is_menu())
 			{
-				user_io_8bit_set_status((cfg.menu_pal) ? 0x10 : 0, 0x10);
+				user_io_status((cfg.menu_pal) ? 0x10 : 0, 0x10);
 				if (cfg.fb_terminal) video_menu_bg((status[0] >> 1) & 7);
-				else user_io_8bit_set_status(0, 0xE);
+				else user_io_status(0, 0xE);
 			}
 			else
 			{
-				if (xml)
+				if (xml && isXmlName(xml) == 1)
 				{
 					arcade_send_rom(xml);
 				}
@@ -1293,8 +1307,8 @@ void user_io_init(const char *path, const char *xml)
 		send_rtc(3);
 
 		// release reset
-		if(!is_minimig() && !is_st()) user_io_8bit_set_status(0, UIO_STATUS_RESET);
-		if(xml) arcade_check_error();
+		if(!is_minimig() && !is_st()) user_io_status(0, UIO_STATUS_RESET);
+		if (xml && isXmlName(xml) == 1) arcade_check_error();
 		break;
 	}
 
@@ -1338,6 +1352,8 @@ void user_io_init(const char *path, const char *xml)
 	if (uartmode < 3 || uartmode > 4) midilink = 0;
 	SetMidiLinkMode(midilink);
 	SetUARTMode(uartmode);
+
+	if (mgl_get()->valid == 0xF) mgl_get()->timer = GetTimer(mgl_get()->delay * 1000);
 }
 
 static int joyswap = 0;
@@ -1674,7 +1690,7 @@ void user_io_file_info(const char *ext)
 	DisableFpga();
 }
 
-int user_io_file_mount(const char *name, unsigned char index, char pre)
+int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_size)
 {
 	int writable = 0;
 	int ret = 0;
@@ -1764,6 +1780,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre)
 	{
 		sd_image[index].type = 2;
 		strcpy(sd_image[index].path, name);
+		size = pre_size;
 	}
 
 	if (io_ver)
@@ -2147,8 +2164,8 @@ static void check_status_change()
 		uint32_t st0 = spi32_w(0);
 		uint32_t st1 = spi32_w(0);
 		DisableIO();
-		user_io_8bit_set_status(st0, ~UIO_STATUS_RESET, 0);
-		user_io_8bit_set_status(st1, 0xFFFFFFFF, 1);
+		user_io_status(st0, ~UIO_STATUS_RESET, 0);
+		user_io_status(st1, 0xFFFFFFFF, 1);
 	}
 	else
 	{
@@ -2488,7 +2505,7 @@ char *user_io_get_confstr(int index)
 	return buffer;
 }
 
-uint32_t user_io_8bit_set_status(uint32_t new_status, uint32_t mask, int ex)
+uint32_t user_io_status(uint32_t new_status, uint32_t mask, int ex)
 {
 	static uint32_t status[2] = { 0, 0 };
 	if (ex) ex = 1;
@@ -2859,7 +2876,14 @@ void user_io_poll()
 				if ((buffer_lba[disk] == (uint64_t)-1) || lba < buffer_lba[disk] || (lba + blks - buffer_lba[disk]) > buf_n)
 				{
 					buffer_lba[disk] = -1;
-					if (sd_image[disk].size)
+					if (blksz == 2352 && is_psx())
+					{
+						diskled_on();
+						psx_read_cd(buffer[disk], lba, buf_n);
+						done = 1;
+						buffer_lba[disk] = lba;
+					}
+					else if (sd_image[disk].size)
 					{
 						diskled_on();
 						if (FileSeek(&sd_image[disk], lba * blksz, SEEK_SET))
@@ -2889,6 +2913,10 @@ void user_io_poll()
 								{
 									memcpy(buffer[disk], "HUBM\x00\x88\x10\x80", 8);
 								}
+							}
+							else if (is_psx())
+							{
+								psx_fill_blanksave(buffer[disk], lba, blks);
 							}
 							else
 							{
@@ -2922,10 +2950,16 @@ void user_io_poll()
 				else if(done && (lba + blks - buffer_lba[disk]) == buf_n)
 				{
 					diskled_on();
-					if (FileSeek(&sd_image[disk], (lba + blks) * blksz, SEEK_SET) &&
+					lba += blks;
+					if (blksz == 2352 && is_psx())
+					{
+						psx_read_cd(buffer[disk], lba, buf_n);
+						buffer_lba[disk] = lba;
+					}
+					else if (FileSeek(&sd_image[disk], lba * blksz, SEEK_SET) &&
 						FileReadAdv(&sd_image[disk], buffer[disk], sizeof(buffer[disk])))
 					{
-						buffer_lba[disk] += buf_n;
+						buffer_lba[disk] = lba;
 					}
 					else
 					{
@@ -2949,6 +2983,8 @@ void user_io_poll()
 	if (core_type == CORE_TYPE_SHARPMZ) sharpmz_poll();
 
 	static uint8_t leds = 0;
+	static uint8_t ps2_scancode_f0 = 0;
+
 	if(use_ps2ctl && !is_minimig() && !is_archie())
 	{
 		leds |= (KBD_LED_FLAG_STATUS | KBD_LED_CAPS_CONTROL);
@@ -2965,9 +3001,13 @@ void user_io_poll()
 			if (!byte)
 			{
 				cmd = kbd_ctl;
+
+				if (ps2_scancode_f0 == 0)
+				{
 				switch (cmd)
 				{
 				case 0xff:
+						ps2_kbd_scan_set = 2;
 					kbd_reply(0xFA);
 					kbd_reply(0xAA);
 					break;
@@ -2977,6 +3017,15 @@ void user_io_poll()
 					kbd_reply(0xAB);
 					kbd_reply(0x83);
 					break;
+					case 0xF0: // scan get/set
+						kbd_reply(0xFA);
+						ps2_scancode_f0 = 1;
+						break;
+
+					case 0xF6: // set default parameters
+						kbd_reply(0xFA);
+						ps2_kbd_scan_set = 2;
+						break;
 
 				case 0xf4:
 				case 0xf5:
@@ -2997,6 +3046,23 @@ void user_io_poll()
 					kbd_reply(0xFE);
 					break;
 				}
+			}
+
+				else
+				{
+					if (cmd <= 3) {
+						kbd_reply(0xFA);
+						if (!cmd) // get
+							kbd_reply(ps2_kbd_scan_set);
+						else // set
+							ps2_kbd_scan_set = cmd;
+						ps2_scancode_f0 = 0;
+					}
+					else {
+						kbd_reply(0xFE); // RESEND
+					}
+				}
+
 			}
 			else
 			{
@@ -3297,7 +3363,8 @@ static void send_keycode(unsigned short key, int press)
 			{
 				// Pause key sends E11477E1F014E077
 				static const unsigned char c[] = { 0xe1, 0x14, 0x77, 0xe1, 0xf0, 0x14, 0xf0, 0x77, 0x00 };
-				const unsigned char *p = c;
+				static const unsigned char c_set1[] = { 0xe1, 0x1d, 0x45, 0xe1, 0x9d, 0xc5, 0x00 };
+				const unsigned char *p = (ps2_kbd_scan_set == 1) ? c_set1 : c;
 
 				spi_uio_cmd_cont(UIO_KEYBOARD);
 
@@ -3321,8 +3388,12 @@ static void send_keycode(unsigned short key, int press)
 					{ 0xE0, 0xF0, 0x7C, 0xE0, 0xF0, 0x12, 0x00, 0x00 },
 					{ 0xE0, 0x12, 0xE0, 0x7C, 0x00, 0x00, 0x00, 0x00 }
 				};
+				static const unsigned char c_set1[2][8] = {
+					{ 0xE0, 0xB7, 0xE0, 0xAA, 0x00, 0x00, 0x00, 0x00 },
+					{ 0xE0, 0x2A, 0xE0, 0x37, 0x00, 0x00, 0x00, 0x00 }
+				};
 
-				const unsigned char *p = c[press];
+				const unsigned char *p = (ps2_kbd_scan_set == 1) ? c_set1[press] : c[press];
 
 				spi_uio_cmd_cont(UIO_KEYBOARD);
 
@@ -3347,8 +3418,13 @@ static void send_keycode(unsigned short key, int press)
 			if (code & EXT) spi8(0xe0);
 
 			// prepend break code if required
-			if (!press) spi8(0xf0);
-
+            if (!press)
+            {
+                if (ps2_kbd_scan_set == 1)
+                        code |= 0x80;
+                    else
+                        spi8(0xf0);
+            }
 			// send code itself
 			spi8(code & 0xff);
 
