@@ -32,6 +32,7 @@
 #define NUMPLAYERS 6
 #define UINPUT_NAME "MiSTer virtual input"
 
+
 char joy_bnames[NUMBUTTONS][32] = {};
 int  joy_bcount = 0;
 
@@ -1117,7 +1118,8 @@ enum QUIRK
 	QUIRK_TOUCHGUN,
 	QUIRK_VCS,
 	QUIRK_JOYCON,
-	QUIRK_GUNCON2,
+	QUIRK_LIGHTGUN_CRT,
+	QUIRK_LIGHTGUN
 };
 
 typedef struct
@@ -1147,7 +1149,7 @@ typedef struct
 	uint8_t  has_kbdmap;
 	uint8_t  kbdmap[256];
 
-	uint16_t guncal[4];
+	int32_t  guncal[4];
 
 	int      accx, accy;
 	int      startx, starty;
@@ -1166,6 +1168,9 @@ typedef struct
 
 	int      lightgun_req;
 	int      lightgun;
+	bool     has_rumble;
+	uint16_t last_rumble;
+	ff_effect rumble_effect;
 
 	int      timeout;
 	char     mac[64];
@@ -1292,6 +1297,7 @@ static void INThandler(int code)
 }
 
 #define test_bit(bit, array)  (array [bit / 8] & (1 << (bit % 8)))
+
 
 static char has_led(int fd)
 {
@@ -1461,19 +1467,19 @@ void finish_map_setting(int dismiss)
 	}
 }
 
-void input_lightgun_save(int idx, uint16_t *cal)
+void input_lightgun_save(int idx, int32_t *cal)
 {
 	static char name[128];
-	sprintf(name, "%s_gun_cal_%04x_%04x.cfg", user_io_get_core_name(), input[idx].vid, input[idx].pid);
-	FileSaveConfig(name, cal, 4 * sizeof(uint16_t));
+	sprintf(name, "%s_gun_cal_%04x_%04x_v2.cfg", user_io_get_core_name(), input[idx].vid, input[idx].pid);
+	FileSaveConfig(name, cal, 4 * sizeof(int32_t));
 	memcpy(input[idx].guncal, cal, sizeof(input[idx].guncal));
 }
 
 static void input_lightgun_load(int idx)
 {
 	static char name[128];
-	sprintf(name, "%s_gun_cal_%04x_%04x.cfg", user_io_get_core_name(), input[idx].vid, input[idx].pid);
-	FileLoadConfig(name, input[idx].guncal, 4 * sizeof(uint16_t));
+	sprintf(name, "%s_gun_cal_%04x_%04x_v2.cfg", user_io_get_core_name(), input[idx].vid, input[idx].pid);
+	FileLoadConfig(name, input[idx].guncal, 4 * sizeof(int32_t));
 }
 
 int input_has_lightgun()
@@ -1482,7 +1488,8 @@ int input_has_lightgun()
 	{
 		if (input[i].quirk == QUIRK_WIIMOTE)  return 1;
 		if (input[i].quirk == QUIRK_TOUCHGUN) return 1;
-		if (input[i].quirk == QUIRK_GUNCON2) return 1;
+		if (input[i].quirk == QUIRK_LIGHTGUN) return 1;
+		if (input[i].quirk == QUIRK_LIGHTGUN_CRT) return 1;
 	}
 	return 0;
 }
@@ -3865,6 +3872,82 @@ int process_joycon(int dev, input_event *ev, input_absinfo *absinfo)
 	return 0;
 }
 
+static int get_rumble_device(int player)
+{
+	for (int i = 0; i < NUMDEV; i++)
+	{
+		int dev = i;
+		if (input[i].bind >= 0) dev = input[i].bind;
+
+		if (input[dev].num == player && input[i].has_rumble)
+		{
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+static int rumble_input_device(int devnum, uint16_t strong_mag, uint16_t weak_mag, uint16_t duration = 500, uint16_t delay = 0)
+{
+	int ioret = 0;
+	if (!input[devnum].has_rumble) return 0;
+	int fd = pool[devnum].fd;
+	if (!(fd >= 0)) return 0;
+
+	if (!strong_mag && !weak_mag) //Stop rumble
+	{
+		if (input[devnum].rumble_effect.id == -1) return 1; //No uploaded effect
+
+		ioret = ioctl(fd, EVIOCRMFF, input[devnum].rumble_effect.id);
+		input[devnum].rumble_effect.id = -1; //always set to -1 even if we fail to remove it?
+		return ioret != -1;
+	}
+	else {
+		//Upload effect and then immediately play it
+		//If the effect id in the input struct is -1, it will be filled with the newly uploaded effect
+		//If it is filled with an already uploaded effect, the effect is modified in place
+		struct ff_effect *fef;
+		fef = &input[devnum].rumble_effect;
+		fef->type = FF_RUMBLE;
+
+		fef->u.rumble.strong_magnitude = strong_mag;
+		fef->u.rumble.weak_magnitude = weak_mag;
+		fef->replay.length = duration;
+		fef->replay.delay = delay;
+		ioret = ioctl(fd, EVIOCSFF, fef);
+
+		if (ioret == -1)
+		{
+			printf("RUMBLE UPLOAD FAILED %s\n", strerror(errno));
+			return 0;
+		}
+
+		//Play effect
+		struct input_event play_ev;
+		play_ev.type = EV_FF;
+		play_ev.code = input[devnum].rumble_effect.id;
+		play_ev.value = 1;
+		ioret = write(fd, (const void *)&play_ev, sizeof(play_ev));
+		return ioret != -1;
+	}
+	return 0;
+}
+
+static void set_rumble(int dev, uint16_t rumble_val)
+{
+	if (input[dev].last_rumble != rumble_val)
+	{
+		uint16_t strong_m, weak_m;
+
+		strong_m = (rumble_val & 0xFF00) + (rumble_val >> 8);
+		weak_m = (rumble_val << 8) + (rumble_val & 0x00FF);
+
+		rumble_input_device(dev, strong_m, weak_m, 0x7FFF);
+		input[dev].last_rumble = rumble_val;
+	}
+}
+
 int input_test(int getchar)
 {
 	static char cur_leds = 0;
@@ -3951,11 +4034,30 @@ int input_test(int getchar)
 						if (!strcmp(input[n].name, UINPUT_NAME))
 						{
 							close(pool[n].fd);
+
 							pool[n].fd = -1;
 							continue;
 						}
 
 						input[n].bind = -1;
+
+						int effects;
+						input[n].has_rumble = false;
+						if (cfg.rumble)
+						{
+							if (ioctl(fd, EVIOCGEFFECTS, &effects) >= 0)
+							{
+								unsigned char ff_features[(FF_MAX + 7) / 8] = {};
+
+								if (ioctl(fd, EVIOCGBIT(EV_FF, sizeof(ff_features)), ff_features) != -1)
+								{
+									if (test_bit(FF_RUMBLE, ff_features)) {
+										input[n].rumble_effect.id = -1;
+										input[n].has_rumble = true;
+									}
+								}
+							}
+						}
 
 						// enable scroll wheel reading
 						if (input[n].mouse)
@@ -4068,16 +4170,40 @@ int input_test(int getchar)
 						{
 							input[n].lightgun = 1;
 						}
+						
+						//Namco Guncon via RetroZord adapter
+						if (input[n].vid == 0x2341 && input[n].pid == 0x8036 && (strstr(uniq, "RZordPsGun") || strstr(input[n].name, "RZordPsGun")))
+						{
+							input[n].quirk = QUIRK_LIGHTGUN;
+							input[n].lightgun = 1;
+							input[n].guncal[0] = 0;
+							input[n].guncal[1] = 32767;
+							input[n].guncal[2] = 0;
+							input[n].guncal[3] = 32767;
+							input_lightgun_load(n);
+						}
 
 						//Namco GunCon 2
 						if (input[n].vid == 0x0b9a && input[n].pid == 0x016a)
 						{
-							input[n].quirk = QUIRK_GUNCON2;
+							input[n].quirk = QUIRK_LIGHTGUN_CRT;
 							input[n].lightgun = 1;
 							input[n].guncal[0] = 25;
 							input[n].guncal[1] = 245;
 							input[n].guncal[2] = 145;
 							input[n].guncal[3] = 700;
+							input_lightgun_load(n);
+						}
+
+						//Namco GunCon 3
+						if (input[n].vid == 0x0b9a && input[n].pid == 0x0800)
+						{
+							input[n].quirk = QUIRK_LIGHTGUN;
+							input[n].lightgun = 1;
+							input[n].guncal[0] = -32768;
+							input[n].guncal[1] = 32767;
+							input[n].guncal[2] = -32768;
+							input[n].guncal[3] = 32767;
 							input_lightgun_load(n);
 						}
 
@@ -4196,6 +4322,20 @@ int input_test(int getchar)
 
 		while (1)
 		{
+			if (cfg.rumble && !is_menu())
+			{
+				for (int i = 0; i < NUMDEV; i++)
+				{
+					if (!input[i].has_rumble) continue;
+
+					int dev = i;
+					if (input[i].bind >= 0) dev = input[i].bind;
+					if (!input[dev].num) continue;
+
+					set_rumble(i, spi_uio_cmd(UIO_GET_RUMBLE | ((input[dev].num - 1) << 8)));
+				}
+			}
+
 			int return_value = poll(pool, NUMDEV + 3, timeout);
 			if (!return_value) break;
 
@@ -4220,10 +4360,13 @@ int input_test(int getchar)
 			for (int pos = 0; pos < NUMDEV; pos++)
 			{
 				int i = pos;
+
+
 				if ((pool[i].fd >= 0) && (pool[i].revents & POLLIN))
 				{
 					if (!input[i].mouse)
 					{
+
 						memset(&ev, 0, sizeof(ev));
 						if (read(pool[i].fd, &ev, sizeof(ev)) == sizeof(ev))
 						{
@@ -4459,16 +4602,16 @@ int input_test(int getchar)
 										break;
 
 									case EV_REL:
+									{
+										//limit the amount of EV_REL messages, so Menu core won't be laggy
+										static unsigned long timeout = 0;
+										if (!timeout || CheckTimer(timeout))
 										{
-											//limit the amount of EV_REL messages, so Menu core won't be laggy
-											static unsigned long timeout = 0;
-											if (!timeout || CheckTimer(timeout))
-											{
-												timeout = GetTimer(20);
-												printf("%04x:%04x:%02d P%d Input event: type=EV_REL, Axis=%d, Offset=%d\n", input[dev].vid, input[dev].pid, i, input[dev].num, ev.code, ev.value);
-											}
+											timeout = GetTimer(20);
+											printf("%04x:%04x:%02d P%d Input event: type=EV_REL, Axis=%d, Offset=%d\n", input[dev].vid, input[dev].pid, i, input[dev].num, ev.code, ev.value);
 										}
-										break;
+									}
+									break;
 
 									case EV_SYN:
 									case EV_MSC:
@@ -4476,35 +4619,46 @@ int input_test(int getchar)
 
 										//analog joystick
 									case EV_ABS:
+									{
+										//limit the amount of EV_ABS messages, so Menu core won't be laggy
+										static unsigned long timeout = 0;
+										if (!timeout || CheckTimer(timeout))
 										{
-											//limit the amount of EV_ABS messages, so Menu core won't be laggy
-											static unsigned long timeout = 0;
-											if (!timeout || CheckTimer(timeout))
+											timeout = GetTimer(20);
+
+											//reduce flood from DUALSHOCK 3/4
+											if ((input[i].quirk == QUIRK_DS4 || input[i].quirk == QUIRK_DS3) && ev.code <= 5 && ev.value > 118 && ev.value < 138)
 											{
-												timeout = GetTimer(20);
-
-												//reduce flood from DUALSHOCK 3/4
-												if ((input[i].quirk == QUIRK_DS4 || input[i].quirk == QUIRK_DS3) && ev.code <= 5 && ev.value > 118 && ev.value < 138)
-												{
-													break;
-												}
-
-												//aliexpress USB encoder floods messages
-												if (input[dev].vid == 0x0079 && input[dev].pid == 0x0006)
-												{
-													if (ev.code == 2) break;
-												}
-
-												printf("%04x:%04x:%02d P%d Input event: type=EV_ABS, Axis=%d [%d...%d], Offset=%d", input[dev].vid, input[dev].pid, i, input[dev].num, ev.code, absinfo.minimum, absinfo.maximum, ev.value);
-												//if (absinfo.fuzz) printf(", fuzz = %d", absinfo.fuzz);
-												if (absinfo.resolution) printf(", res = %d", absinfo.resolution);
-												printf("\n");
+												break;
 											}
+
+											//aliexpress USB encoder floods messages
+											if (input[dev].vid == 0x0079 && input[dev].pid == 0x0006)
+											{
+												if (ev.code == 2) break;
+											}
+
+											printf("%04x:%04x:%02d P%d Input event: type=EV_ABS, Axis=%d [%d...%d], Offset=%d", input[dev].vid, input[dev].pid, i, input[dev].num, ev.code, absinfo.minimum, absinfo.maximum, ev.value);
+											//if (absinfo.fuzz) printf(", fuzz = %d", absinfo.fuzz);
+											if (absinfo.resolution) printf(", res = %d", absinfo.resolution);
+											printf("\n");
 										}
-										break;
+									}
+									break;
 
 									default:
 										printf("%04x:%04x:%02d P%d Input event: type=%d, code=%d(0x%x), value=%d(0x%x)\n", input[dev].vid, input[dev].pid, i, input[dev].num, ev.type, ev.code, ev.code, ev.value, ev.value);
+									}
+
+									if (ev.type == EV_KEY && input[dev].num)
+									{
+										int n = get_rumble_device(input[dev].num);
+										if (n >= 0)
+										{
+											uint16_t rumble_val = input[n].last_rumble;
+											if (ev.code == (input[dev].mmap[SYS_BTN_X] & 0xFFFF)) set_rumble(n, (rumble_val & 0xFF00) | ((ev.value) ? 0xFF : 0x00));
+											if (ev.code == (input[dev].mmap[SYS_BTN_Y] & 0xFFFF)) set_rumble(n, (rumble_val & 0xFF) | ((ev.value) ? 0xFF00 : 0x00));
+										}
 									}
 								}
 
@@ -4527,7 +4681,7 @@ int input_test(int getchar)
 									}
 								}
 
-								if (ev.type == EV_ABS && input[i].quirk == QUIRK_GUNCON2)
+								if (ev.type == EV_ABS && (input[i].quirk == QUIRK_LIGHTGUN_CRT || input[i].quirk == QUIRK_LIGHTGUN))
 								{
 									menu_lightgun_cb(i, ev.type, ev.code, ev.value);
 
@@ -4545,7 +4699,7 @@ int input_test(int getchar)
 
 								if (ev.type == EV_KEY && user_io_osd_is_visible())
 								{
-									if (input[i].quirk == QUIRK_WIIMOTE || input[i].quirk == QUIRK_GUNCON2)
+									if (input[i].quirk == QUIRK_WIIMOTE || input[i].quirk == QUIRK_LIGHTGUN_CRT || input[i].quirk == QUIRK_LIGHTGUN)
 									{
 										if (menu_lightgun_cb(i, ev.type, ev.code, ev.value)) continue;
 									}
