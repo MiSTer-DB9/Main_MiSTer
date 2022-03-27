@@ -69,14 +69,14 @@ enum MENU
 {
 	MENU_NONE1,
 	MENU_NONE2,
+	MENU_INFO,
+
 	MENU_SYSTEM1,
 	MENU_SYSTEM2,
 	MENU_COMMON1,
 	MENU_COMMON2,
 	MENU_MISC1,
 	MENU_MISC2,
-
-	MENU_INFO,
 
 	MENU_FILE_SELECT1,
 	MENU_FILE_SELECT2,
@@ -116,6 +116,9 @@ enum MENU
 	MENU_SCRIPTS1,
 	MENU_SCRIPTS_FB,
 	MENU_SCRIPTS_FB2,
+
+	MENU_DOC_FILE_SELECTED,
+	MENU_DOC_FILE_SELECTED_2,
 
 	MENU_CHEATS1,
 	MENU_CHEATS2,
@@ -553,7 +556,7 @@ static uint32_t menu_key_get(void)
 		else if (CheckTimer(repeat))
 		{
 			repeat = GetTimer(REPEATRATE);
-			if (GetASCIIKey(c1) || ((menustate == MENU_COMMON2) && (menusub == 15)) || ((menustate == MENU_SYSTEM2) && (menusub == 4)))
+			if (GetASCIIKey(c1) || ((menustate == MENU_COMMON2) && (menusub == 17)) || ((menustate == MENU_SYSTEM2) && (menusub == 5)))
 			{
 				c = c1;
 				hold_cnt++;
@@ -954,7 +957,7 @@ static int gun_y = 0;
 static int gun_ok = 0;
 static int gun_side = 0;
 static int gun_idx = 0;
-static uint16_t gun_pos[4] = {};
+static int32_t gun_pos[4] = {};
 static int page = 0;
 
 void HandleUI(void)
@@ -1016,30 +1019,64 @@ void HandleUI(void)
 	static int store_name;
 	static int vfilter_type;
 
-	static int mgl_done = 0;
-	static int mgl_active = 0;
-	static int mgl_submenu = -1;
-
 	static char	cp_MenuCancel;
 
 	uint32_t c = 0;
 
-	if (!mgl_done)
+	mgl_struct *mgl = mgl_get();
+
+	/*
+	static int old_state = -1;
+	static int old_current = -1;
+	static int old_done = -1;
+	static uint32_t old_menustate = -1;
+
+	if ((old_state != mgl->state) || (old_current != mgl->current) || (old_done != mgl->done) || (old_menustate != menustate))
 	{
-		mgl_struct *mgl = mgl_get();
-		if (mgl->valid != 0xF ||
-			is_menu() || is_minimig() || is_st() || is_archie()
-			|| user_io_core_type() == CORE_TYPE_SHARPMZ) mgl_done = 1;
-		else
+		printf("*** MGL menustate=%d, count=%d current=%d state=%d action=%d done=%d\n", menustate, mgl->count, mgl->current, mgl->state, mgl->item[mgl->current].action, mgl->done);
+		old_state = mgl->state;
+		old_current = mgl->current;
+		old_done = mgl->done;
+		old_menustate = menustate;
+	}
+	*/
+
+	if (!mgl->done)
+	{
+		switch (mgl->state)
 		{
-			if (mgl->timer && CheckTimer(mgl->timer))
+		case 0:
+			if (CheckTimer(mgl->timer))
 			{
-				mgl_active = 1;
-				mgl_done = 1;
+				mgl->state = (mgl->item[mgl->current].action == MGL_ACTION_LOAD) ? 1 : 4;
 			}
+			break;
+
+		case 3:
+			mgl->state = 0;
+			mgl->current++;
+			if (mgl->current < mgl->count) mgl->timer = GetTimer(mgl->item[mgl->current].delay * 1000);
+			else mgl->done = 1;
+			break;
+
+		case 4:
+			user_io_set_kbd_reset(1);
+			user_io_send_buttons(1);
+			mgl->timer = GetTimer(mgl->item[mgl->current].hold ? (mgl->item[mgl->current].hold * 1000) : 100);
+			mgl->state = 5;
+			break;
+
+		case 5:
+			if (CheckTimer(mgl->timer))
+			{
+				user_io_set_kbd_reset(0);
+				user_io_send_buttons(1);
+				mgl->state = 3;
+			}
+			break;
 		}
 	}
-	else if(!mgl_active)
+	else
 	{
 		// get user control codes
 		c = menu_key_get();
@@ -1319,8 +1356,9 @@ void HandleUI(void)
 	case MENU_INFO:
 		if (CheckTimer(menu_timer)) menustate = MENU_NONE1;
 		// fall through
+
 	case MENU_NONE2:
-		if (menu || (is_menu() && !video_fb_state()) || mgl_active)
+		if (menu || (is_menu() && !video_fb_state()) || (menustate == MENU_NONE2 && !mgl->done && mgl->state == 1))
 		{
 			OsdSetSize(16);
 			if(!is_menu() && (get_key_mod() & (LALT | RALT))) //Alt+Menu
@@ -1358,8 +1396,9 @@ void HandleUI(void)
 			}
 			menusub = 0;
 			OsdClear();
-			if (mgl_active) OsdDisable();
+			if (!mgl->done) OsdDisable();
 			else OsdEnable(DISABLE_KEYBOARD);
+			if (mgl->state == 1) mgl->state = 2;
 		}
 		break;
 
@@ -1696,7 +1735,7 @@ void HandleUI(void)
 							if (p[idx] == 'C') idx++;
 
 							int num = (p[idx] >= '0' && p[idx] <= '9') ? p[idx] - '0' : 0;
-							if (mgl_active && num == mgl_get()->index && (p[0] == mgl_get()->type)) mgl_submenu = selentry;
+							if (!mgl->done && num == mgl->item[mgl->current].index && (p[0] == mgl->item[mgl->current].type)) mgl->item[mgl->current].submenu = selentry;
 
 							if (is_x86() && x86_get_image_name(num))
 							{
@@ -1898,7 +1937,11 @@ void HandleUI(void)
 		saved_menustate = MENU_GENERIC_MAIN1;
 
 		// F/S option not found -> deactivate mgl.
-		if (mgl_active && mgl_submenu < 0) mgl_active = 0;
+		if (!mgl->done && mgl->item[mgl->current].submenu < 0)
+		{
+			menustate = MENU_NONE1;
+			mgl->state = 3;
+		}
 
 		if (menu_save_timer && !CheckTimer(menu_save_timer))
 		{
@@ -1926,11 +1969,11 @@ void HandleUI(void)
 				page = 0;
 			}
 		}
-		else if (select || recent || minus || plus || mgl_active)
+		else if (select || recent || minus || plus || !mgl->done)
 		{
-			if (mgl_active)
+			if (!mgl->done)
 			{
-				menusub = mgl_submenu;
+				menusub = mgl->item[mgl->current].submenu;
 				select = 1;
 			}
 
@@ -2043,7 +2086,7 @@ void HandleUI(void)
 							}
 						}
 
-						if (mgl_active) menustate = MENU_GENERIC_FILE_SELECTED;
+						if (!mgl->done) menustate = MENU_GENERIC_FILE_SELECTED;
 						else if (select) SelectFile(Selected_F[ioctl_index & 15], ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
 						else if (recent_init(ioctl_index)) menustate = MENU_RECENT1;
 					}
@@ -2093,7 +2136,7 @@ void HandleUI(void)
 
 						if (is_psx()) fs_Options |= SCANO_NOZIP;
 
-						if (mgl_active) menustate = MENU_GENERIC_IMAGE_SELECTED;
+						if (!mgl->done) menustate = MENU_GENERIC_IMAGE_SELECTED;
 						else if (select) SelectFile(Selected_tmp, ext, fs_Options, fs_MenuSelect, fs_MenuCancel);
 						else if (recent_init(ioctl_index + 500)) menustate = MENU_RECENT1;
 					}
@@ -2225,14 +2268,13 @@ void HandleUI(void)
 
 	case MENU_GENERIC_FILE_SELECTED:
 		{
-			if (mgl_active) snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), mgl_get()->path);
+			if (!mgl->done) snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), mgl->item[mgl->current].path);
 
 			MenuHide();
 			printf("File selected: %s\n", selPath);
 			memcpy(Selected_F[ioctl_index & 15], selPath, sizeof(Selected_F[ioctl_index & 15]));
 
-			if (!mgl_active && selPath[0]) recent_update(SelectedDir, Selected_F[ioctl_index & 15], SelectedLabel, ioctl_index);
-			mgl_active = 0;
+			if (mgl->done && selPath[0]) recent_update(SelectedDir, Selected_F[ioctl_index & 15], SelectedLabel, ioctl_index);
 
 			if (store_name)
 			{
@@ -2265,12 +2307,14 @@ void HandleUI(void)
 
 				if (addon[0] == 'f' && addon[1] == '1') process_addon(addon, idx);
 			}
+
+			mgl->state = 3;
 		}
 		break;
 
 	case MENU_GENERIC_IMAGE_SELECTED:
 		{
-			if (mgl_active) snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), mgl_get()->path);
+			if (!mgl->done) snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), mgl->item[mgl->current].path);
 
 			if (store_name)
 			{
@@ -2284,8 +2328,7 @@ void HandleUI(void)
 
 			printf("Image selected: %s\n", selPath);
 			memcpy(Selected_S[(int)ioctl_index], selPath, sizeof(Selected_S[(int)ioctl_index]));
-			if (!mgl_active) recent_update(SelectedDir, Selected_S[(int)ioctl_index], SelectedLabel, ioctl_index + 500);
-			mgl_active = 0;
+			if (mgl->done) recent_update(SelectedDir, Selected_S[(int)ioctl_index], SelectedLabel, ioctl_index + 500);
 
 			char idx = user_io_ext_idx(selPath, fs_pFileExt) << 6 | ioctl_index;
 			if (addon[0] == 'f' && addon[1] != '1') process_addon(addon, idx);
@@ -2315,6 +2358,9 @@ void HandleUI(void)
 			}
 
 			if (addon[0] == 'f' && addon[1] == '1') process_addon(addon, idx);
+
+			mgl->state = 3;
+			if (!mgl->done) MenuHide();
 		}
 		break;
 
@@ -2332,7 +2378,7 @@ void HandleUI(void)
 			while(1)
 			{
 				n = 0;
-				menumask = 0x3802f;
+				menumask = 0x7802f;
 
 				if (!menusub) firstmenu = 0;
 				adjvisible = 0;
@@ -2389,12 +2435,15 @@ void HandleUI(void)
 				}
 
 				MenuWrite(n++);
+				MenuWrite(n++, " Help                      \x16", menusub == 15);
+				MenuWrite(n++, " About",                          menusub == 16);
+
+				MenuWrite(n++);
 				cr = n;
-				MenuWrite(n++, " Reboot (hold \x16 cold reboot)", menusub == 15);
-				MenuWrite(n++, " About", menusub == 16);
+				MenuWrite(n++, " Reboot (hold \x16 cold reboot)", menusub == 17);
 
 				while(n < OsdGetSize() - 1) MenuWrite(n++);
-				MenuWrite(n++, STD_EXIT, menusub == 17, 0, OSD_ARROW_LEFT);
+				MenuWrite(n++, STD_EXIT, menusub == 18, 0, OSD_ARROW_LEFT);
 				sysinfo_timer = 0;
 
 				if (!adjvisible) break;
@@ -2538,21 +2587,28 @@ void HandleUI(void)
 				break;
 
 			case 15:
+				FileCreatePath(DOCS_DIR);
+				snprintf(Selected_tmp, sizeof(Selected_tmp), DOCS_DIR"/%s",user_io_get_core_name());
+				FileCreatePath(Selected_tmp);
+				SelectFile(Selected_tmp, "PDFTXTMD ",  SCANO_DIR | SCANO_TXT  , MENU_DOC_FILE_SELECTED, MENU_COMMON1);
+				break;
+
+			case 16:
+				menustate = MENU_ABOUT1;
+				menusub = 0;
+				break;
+
+			case 17:
 				{
 					reboot_req = 1;
 
-					int off = hold_cnt/3;
+					int off = hold_cnt / 3;
 					if (off > 5) reboot(1);
 
 					sprintf(s, " Cold Reboot");
 					p = s + 5 - off;
 					MenuWrite(cr, p, 1, 0);
 				}
-				break;
-
-			case 16:
-				menustate = MENU_ABOUT1;
-				menusub = 0;
 				break;
 
 			default:
@@ -2812,6 +2868,66 @@ void HandleUI(void)
 				menusub = 5;
 				menustate = MENU_COMMON1;
 				break;
+			}
+		}
+		break;
+
+	case MENU_DOC_FILE_SELECTED:
+		if (cfg.fb_terminal)
+		{
+			memcpy(Selected_tmp, selPath, sizeof(Selected_tmp));
+			static char cmd[1024 * 2];
+			const char *path = getFullPath(selPath);
+			menustate = MENU_DOC_FILE_SELECTED_2;
+			video_chvt(2);
+			video_fb_enable(1);
+			vga_nag();
+			// check file type
+			const char *ext = "";
+                        if (strlen(path) > 4) ext = path + strlen(path) - 4;
+			static char binary[1024*2];
+			printf("extension: [%s]\n",ext);
+			strcpy(binary,"/media/fat/linux/pdfviewer");
+			if (!strcasecmp(ext,".pdf")) {
+				sprintf(binary,"/media/fat/linux/pdfviewer --zoom_to_fit \"%s\"",path);
+			} else if (!strcasecmp(ext,".txt")) {
+				sprintf(binary,"less \"%s\"",path);
+			} else if (!strcasecmp(ext+1,".md")) {
+				sprintf(binary,"/media/fat/linux/glow --style dark  \"%s\" | less -R",path);
+			}
+
+			sprintf(cmd, "#!/bin/bash\nexport LC_ALL=en_US.UTF-8\nexport HOME=/root\nexport LESSKEY=/media/fat/linux/lesskey\ncd $(dirname \"%s\")\n%s \necho \"Press any key to continue\"\n", path, binary  );
+			printf("CMD [%s]\n",cmd);
+			unlink("/tmp/script");
+			FileSave("/tmp/script", cmd, strlen(cmd));
+			ttypid = fork();
+			if (!ttypid)
+			{
+				execl("/sbin/agetty", "/sbin/agetty", "-a", "root", "-l", "/tmp/script", "--nohostname", "-L", "tty2", "linux", NULL);
+				exit(0); //should never be reached
+			}
+		}
+		break;
+
+	case MENU_DOC_FILE_SELECTED_2:
+		if (ttypid)
+		{
+			if (waitpid(ttypid, 0, WNOHANG) > 0)
+			{
+				ttypid = 0;
+				user_io_osd_key_enable(1);
+			}
+		}
+		else
+		{
+			if (c & UPSTROKE)
+			{
+				video_menu_bg((user_io_status(0, 0) & 0xE) >> 1);
+				video_fb_enable(0);
+				menustate = MENU_NONE1;
+				menusub = 3;
+				OsdClear();
+				OsdEnable(DISABLE_KEYBOARD);
 			}
 		}
 		break;
@@ -5135,6 +5251,16 @@ void HandleUI(void)
 
 		menustate = MENU_MINIMIG_MAIN2;
 		parentstate = MENU_MINIMIG_MAIN1;
+
+		if (!mgl->done)
+		{
+			if (mgl->item[mgl->current].index < 4)
+			{
+				menusub = mgl->item[mgl->current].index;
+				menustate = MENU_MINIMIG_ADFFILE_SELECTED;
+				break;
+			}
+		}
 		break;
 
 	case MENU_MINIMIG_MAIN2:
@@ -5241,11 +5367,17 @@ void HandleUI(void)
 		break;
 
 	case MENU_MINIMIG_ADFFILE_SELECTED:
+		if (!mgl->done) snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), mgl->item[mgl->current].path);
 		memcpy(Selected_F[menusub], selPath, sizeof(Selected_F[menusub]));
-		recent_update(SelectedDir, selPath, SelectedLabel, 0);
+		if (mgl->done) recent_update(SelectedDir, selPath, SelectedLabel, 0);
 		InsertFloppy(&df[menusub], selPath);
 		if (menusub < drives) menusub++;
 		menustate = MENU_MINIMIG_MAIN1;
+		if (!mgl->done)
+		{
+			mgl->state = 3;
+			menustate = MENU_NONE1;
+		}
 		break;
 
 	case MENU_MINIMIG_LOADCONFIG1:
@@ -5931,7 +6063,7 @@ void HandleUI(void)
 
 		m = 0;
 		OsdSetTitle("System Settings", OSD_ARROW_LEFT);
-		menumask = 0x3F;
+		menumask = 0x7F;
 
 		OsdWrite(m++);
 		sprintf(s, "       MiSTer v%s", version + 5);
@@ -5983,15 +6115,16 @@ void HandleUI(void)
 		OsdWrite(m++, " Remap keyboard            \x16", menusub == 1);
 		OsdWrite(m++, " Define joystick buttons   \x16", menusub == 2);
 		OsdWrite(m++, " Scripts                   \x16", menusub == 3);
+		OsdWrite(m++, " Help                      \x16", menusub == 4);
 		OsdWrite(m++, "");
 		cr = m;
-		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 4);
+		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 5);
 		sysinfo_timer = 0;
 
 		reboot_req = 0;
 
 		while(m < OsdGetSize()-1) OsdWrite(m++, "");
-		OsdWrite(15, STD_EXIT, menusub == 5);
+		OsdWrite(15, STD_EXIT, menusub == 6);
 		menustate = MENU_SYSTEM2;
 		break;
 
@@ -6008,14 +6141,17 @@ void HandleUI(void)
 			case 0:
 				if (getStorage(1) || isUSBMounted()) setStorage(!getStorage(1));
 				break;
+
 			case 1:
 				start_map_setting(0);
 				menustate = MENU_KBDMAP;
 				menusub = 0;
 				break;
+
 			case 2:
 				menustate = MENU_JOYSYSMAP;
 				break;
+
 			case 3:
 				{
 					uint8_t confirm[32] = {};
@@ -6044,6 +6180,12 @@ void HandleUI(void)
 				break;
 
 			case 4:
+				strcpy(Selected_tmp, DOCS_DIR);
+				FileCreatePath(Selected_tmp);
+				SelectFile(Selected_tmp, "PDFTXTMD ", SCANO_DIR | SCANO_TXT, MENU_DOC_FILE_SELECTED, MENU_NONE1);
+				break;
+
+			case 5:
 				{
 					reboot_req = 1;
 
@@ -6056,7 +6198,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 5:
+			case 6:
 				menustate = MENU_NONE1;
 				break;
 			}
@@ -6209,6 +6351,7 @@ void HandleUI(void)
 			video_fb_enable(1);
 			vga_nag();
 			sprintf(cmd, "#!/bin/bash\nexport LC_ALL=en_US.UTF-8\nexport HOME=/root\ncd $(dirname %s)\n%s\necho \"Press any key to continue\"\n", path, path);
+
 			unlink("/tmp/script");
 			FileSave("/tmp/script", cmd, strlen(cmd));
 			ttypid = fork();
@@ -6766,18 +6909,21 @@ static void set_text(const char *message, unsigned char code)
 
 void InfoMessage(const char *message, int timeout, const char *title)
 {
-	if (menustate != MENU_INFO)
+	if (menustate <= MENU_INFO)
 	{
-		OsdSetTitle(title, 0);
-		OsdEnable(OSD_MSG); // do not disable keyboard
+		if (menustate != MENU_INFO)
+		{
+			OsdSetTitle(title, 0);
+			OsdEnable(OSD_MSG); // do not disable keyboard
+		}
+
+		set_text(message, 0);
+
+		menu_timer = GetTimer(timeout);
+		menustate = MENU_INFO;
+		HandleUI();
+		OsdUpdate();
 	}
-
-	set_text(message, 0);
-
-	menu_timer = GetTimer(timeout);
-	menustate = MENU_INFO;
-	HandleUI();
-	OsdUpdate();
 }
 
 void MenuHide()
@@ -6788,7 +6934,7 @@ void MenuHide()
 
 void Info(const char *message, int timeout, int width, int height, int frame)
 {
-	if (!user_io_osd_is_visible())
+	if (menustate <= MENU_INFO)
 	{
 		OSD_PrintInfo(message, &width, &height, frame);
 		InfoEnable(20, (cfg.direct_video && get_vga_fb()) ? 30 : 10, width, height);

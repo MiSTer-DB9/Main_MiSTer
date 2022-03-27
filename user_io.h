@@ -72,6 +72,7 @@
 #define UIO_CHK_UPLOAD  0x3C
 #define UIO_ASTICK_2    0x3D
 #define UIO_SHADOWMASK  0x3E
+#define UIO_GET_RUMBLE  0x3F
 
 // codes as used by 8bit for file loading from OSD
 #define FIO_FILE_TX     0x53
@@ -197,6 +198,7 @@ void user_io_read_confstr();
 char *user_io_get_confstr(int index);
 uint32_t user_io_status(uint32_t, uint32_t, int ex = 0);
 int user_io_get_kbd_reset();
+void user_io_set_kbd_reset(int reset);
 
 uint32_t user_io_get_file_crc();
 int  user_io_file_mount(const char *name, unsigned char index = 0, char pre = 0, int pre_size = 0);

@@ -1353,7 +1353,14 @@ void user_io_init(const char *path, const char *xml)
 	SetMidiLinkMode(midilink);
 	SetUARTMode(uartmode);
 
-	if (mgl_get()->valid == 0xF) mgl_get()->timer = GetTimer(mgl_get()->delay * 1000);
+	if (!mgl_get()->count || is_menu() || is_st() || is_archie() || user_io_core_type() == CORE_TYPE_SHARPMZ)
+	{
+		mgl_get()->done = 1;
+	}
+	else
+	{
+		mgl_get()->timer = GetTimer(mgl_get()->item[0].delay * 1000);
+	}
 }
 
 static int joyswap = 0;
@@ -2561,6 +2568,8 @@ int get_vga_fb()
 }
 
 static char kbd_reset = 0;
+static char kbd_reset_ovr = 0;
+
 void user_io_send_buttons(char force)
 {
 	static unsigned short key_map = 0;
@@ -2570,7 +2579,7 @@ void user_io_send_buttons(char force)
 
 	if (user_io_menu_button()) map |= BUTTON1;
 	if (user_io_user_button()) map |= BUTTON2;
-	if (kbd_reset) map |= BUTTON2;
+	if (kbd_reset || kbd_reset_ovr) map |= BUTTON2;
 
 	if (cfg.vga_scaler) map |= CONF_VGA_SCALER;
 	if (cfg.vga_sog) map |= CONF_VGA_SOG;
@@ -2615,7 +2624,12 @@ void user_io_send_buttons(char force)
 
 int user_io_get_kbd_reset()
 {
-	return kbd_reset;
+	return kbd_reset || kbd_reset_ovr;
+}
+
+void user_io_set_kbd_reset(int reset)
+{
+	kbd_reset_ovr = reset;
 }
 
 void user_io_set_ini(int ini_num)
@@ -2983,7 +2997,6 @@ void user_io_poll()
 	if (core_type == CORE_TYPE_SHARPMZ) sharpmz_poll();
 
 	static uint8_t leds = 0;
-	static uint8_t ps2_scancode_f0 = 0;
 
 	if(use_ps2ctl && !is_minimig() && !is_archie())
 	{
@@ -3002,8 +3015,6 @@ void user_io_poll()
 			{
 				cmd = kbd_ctl;
 
-				if (ps2_scancode_f0 == 0)
-				{
 				switch (cmd)
 				{
 				case 0xff:
@@ -3017,15 +3028,21 @@ void user_io_poll()
 					kbd_reply(0xAB);
 					kbd_reply(0x83);
 					break;
-					case 0xF0: // scan get/set
+
+				case 0xf0: // scan get/set
 						kbd_reply(0xFA);
-						ps2_scancode_f0 = 1;
+					byte++;
 						break;
 
-					case 0xF6: // set default parameters
+				case 0xf6: // set default parameters
 						kbd_reply(0xFA);
 						ps2_kbd_scan_set = 2;
 						break;
+
+				case 0xf3: // set type rate
+					kbd_reply(0xFA);
+					byte++;
+					break;
 
 				case 0xf4:
 				case 0xf5:
@@ -3047,23 +3064,6 @@ void user_io_poll()
 					break;
 				}
 			}
-
-				else
-				{
-					if (cmd <= 3) {
-						kbd_reply(0xFA);
-						if (!cmd) // get
-							kbd_reply(ps2_kbd_scan_set);
-						else // set
-							ps2_kbd_scan_set = cmd;
-						ps2_scancode_f0 = 0;
-					}
-					else {
-						kbd_reply(0xFE); // RESEND
-					}
-				}
-
-			}
 			else
 			{
 				switch (cmd)
@@ -3071,10 +3071,27 @@ void user_io_poll()
 				case 0xed:
 					kbd_reply(0xFA);
 					byte = 0;
-
 					if (kbd_ctl & 4) leds |= KBD_LED_CAPS_STATUS;
 						else leds &= ~KBD_LED_CAPS_STATUS;
+					break;
 
+				case 0xf0:
+					byte = 0;
+					if (kbd_ctl <= 3)
+					{
+						kbd_reply(0xFA);
+						if (!kbd_ctl) kbd_reply(ps2_kbd_scan_set); // get
+						else ps2_kbd_scan_set = kbd_ctl; // set
+					}
+					else
+					{
+						kbd_reply(0xFE); // RESEND
+					}
+					break;
+
+				case 0xf3: // set type rate
+					kbd_reply(0xFA);
+					byte = 0;
 					break;
 
 				default:
