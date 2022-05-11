@@ -1119,7 +1119,8 @@ enum QUIRK
 	QUIRK_VCS,
 	QUIRK_JOYCON,
 	QUIRK_LIGHTGUN_CRT,
-	QUIRK_LIGHTGUN
+	QUIRK_LIGHTGUN,
+	QUIRK_WHEEL,
 };
 
 typedef struct
@@ -1171,6 +1172,12 @@ typedef struct
 	bool     has_rumble;
 	uint16_t last_rumble;
 	ff_effect rumble_effect;
+
+	int8_t   wh_steer;
+	int8_t   wh_accel;
+	int8_t   wh_break;
+	int8_t   wh_clutch;
+	int8_t   wh_combo;
 
 	int      timeout;
 	char     mac[64];
@@ -1578,6 +1585,8 @@ static uint32_t joy[NUMPLAYERS] = {};
 static uint32_t autofire[NUMPLAYERS] = {};
 static uint32_t autofirecodes[NUMPLAYERS][BTN_NUM] = {};
 static int af_delay[NUMPLAYERS] = {};
+
+static uint32_t crtgun_timeout[NUMDEV] = {};
 
 static unsigned char mouse_btn = 0; //emulated mouse
 static unsigned char mice_btn = 0;
@@ -2280,25 +2289,39 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 			}
 			if (!input[dev].mmap[SYS_BTN_OSD_KTGL + 2]) input[dev].mmap[SYS_BTN_OSD_KTGL + 2] = input[dev].mmap[SYS_BTN_OSD_KTGL + 1];
 
-			if (input[dev].mmap[SYS_AXIS_X] == input[dev].mmap[SYS_AXIS1_X])
+			if (input[dev].quirk == QUIRK_WHEEL)
 			{
-				input[dev].stick_l[0] = SYS_AXIS1_X;
-				if((input[dev].mmap[SYS_AXIS2_X] >> 16) == 2) input[dev].stick_r[0] = SYS_AXIS2_X;
+				input[dev].mmap[SYS_AXIS_MX] = -1;
+				input[dev].mmap[SYS_AXIS_MY] = -1;
+				input[dev].mmap[SYS_AXIS_X] = -1;
+				input[dev].mmap[SYS_AXIS_Y] = -1;
+				input[dev].mmap[SYS_AXIS1_X] = -1;
+				input[dev].mmap[SYS_AXIS1_Y] = -1;
+				input[dev].mmap[SYS_AXIS2_X] = -1;
+				input[dev].mmap[SYS_AXIS2_Y] = -1;
 			}
-			if (input[dev].mmap[SYS_AXIS_Y] == input[dev].mmap[SYS_AXIS1_Y])
+			else
 			{
-				input[dev].stick_l[1] = SYS_AXIS1_Y;
-				if ((input[dev].mmap[SYS_AXIS2_Y] >> 16) == 2) input[dev].stick_r[1] = SYS_AXIS2_Y;
-			}
-			if (input[dev].mmap[SYS_AXIS_X] == input[dev].mmap[SYS_AXIS2_X])
-			{
-				input[dev].stick_l[0] = SYS_AXIS2_X;
-				if ((input[dev].mmap[SYS_AXIS1_X] >> 16) == 2) input[dev].stick_r[0] = SYS_AXIS1_X;
-			}
-			if (input[dev].mmap[SYS_AXIS_Y] == input[dev].mmap[SYS_AXIS2_Y])
-			{
-				input[dev].stick_l[1] = SYS_AXIS2_Y;
-				if ((input[dev].mmap[SYS_AXIS1_Y] >> 16) == 2) input[dev].stick_r[1] = SYS_AXIS1_Y;
+				if (input[dev].mmap[SYS_AXIS_X] == input[dev].mmap[SYS_AXIS1_X])
+				{
+					input[dev].stick_l[0] = SYS_AXIS1_X;
+					if ((input[dev].mmap[SYS_AXIS2_X] >> 16) == 2) input[dev].stick_r[0] = SYS_AXIS2_X;
+				}
+				if (input[dev].mmap[SYS_AXIS_Y] == input[dev].mmap[SYS_AXIS1_Y])
+				{
+					input[dev].stick_l[1] = SYS_AXIS1_Y;
+					if ((input[dev].mmap[SYS_AXIS2_Y] >> 16) == 2) input[dev].stick_r[1] = SYS_AXIS2_Y;
+				}
+				if (input[dev].mmap[SYS_AXIS_X] == input[dev].mmap[SYS_AXIS2_X])
+				{
+					input[dev].stick_l[0] = SYS_AXIS2_X;
+					if ((input[dev].mmap[SYS_AXIS1_X] >> 16) == 2) input[dev].stick_r[0] = SYS_AXIS1_X;
+				}
+				if (input[dev].mmap[SYS_AXIS_Y] == input[dev].mmap[SYS_AXIS2_Y])
+				{
+					input[dev].stick_l[1] = SYS_AXIS2_Y;
+					if ((input[dev].mmap[SYS_AXIS1_Y] >> 16) == 2) input[dev].stick_r[1] = SYS_AXIS1_Y;
+				}
 			}
 		}
 		input[dev].has_mmap++;
@@ -2827,18 +2850,21 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 							}
 						}
 
-						if (input[dev].mmap[SYS_AXIS_X])
+						if (input[dev].quirk != QUIRK_WHEEL)
 						{
-							uint16_t key = KEY_EMU + ((uint16_t)input[dev].mmap[SYS_AXIS_X]*2);
-							if (ev->code == (key + 1)) joy_digital(0, 1 << 0, 0, ev->value, 0);
-							if (ev->code == key) joy_digital(0, 1 << 1, 0, ev->value, 1);
-						}
+							if (input[dev].mmap[SYS_AXIS_X])
+							{
+								uint16_t key = KEY_EMU + ((uint16_t)input[dev].mmap[SYS_AXIS_X] * 2);
+								if (ev->code == (key + 1)) joy_digital(0, 1 << 0, 0, ev->value, 0);
+								if (ev->code == key) joy_digital(0, 1 << 1, 0, ev->value, 1);
+							}
 
-						if (input[dev].mmap[SYS_AXIS_Y])
-						{
-							uint16_t key = KEY_EMU + ((uint16_t)input[dev].mmap[SYS_AXIS_Y]*2);
-							if (ev->code == (key + 1)) joy_digital(0, 1 << 2, 0, ev->value, 2);
-							if (ev->code == key) joy_digital(0, 1 << 3, 0, ev->value, 3);
+							if (input[dev].mmap[SYS_AXIS_Y])
+							{
+								uint16_t key = KEY_EMU + ((uint16_t)input[dev].mmap[SYS_AXIS_Y] * 2);
+								if (ev->code == (key + 1)) joy_digital(0, 1 << 2, 0, ev->value, 2);
+								if (ev->code == key) joy_digital(0, 1 << 3, 0, ev->value, 3);
+							}
 						}
 					}
 				}
@@ -3065,7 +3091,7 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 				// normalize to -range/2...+range/2
 				value = value - (absinfo->minimum + absinfo->maximum) / 2;
 
-				if (ev->code > 1 || !input[dev].lightgun) //lightgun has no dead zone
+				if (ev->code > 1 || (!input[dev].lightgun && input[dev].quirk != QUIRK_WHEEL)) //lightgun/wheel has no dead zone
 				{
 					// check the dead-zone and remove it from the range
 					hrange -= dead;
@@ -3103,7 +3129,38 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 					// skip if joystick is undefined.
 					if (!input[dev].num) break;
 
-					if (ev->code == 0 && input[dev].lightgun)
+					if (input[dev].quirk == QUIRK_WHEEL)
+					{
+						int wh_value = ((127 * (ev->value - absinfo->minimum)) / (absinfo->maximum - absinfo->minimum)) - 127;
+
+						if (ev->code == input[dev].wh_steer)
+						{
+							joy_analog(input[dev].num, 0, value, 0);
+						}
+						else if (ev->code == input[dev].wh_accel)
+						{
+							joy_analog(input[dev].num, 1, wh_value, 0);
+						}
+						else if (ev->code == input[dev].wh_break)
+						{
+							joy_analog(input[dev].num, 1, wh_value, 1);
+						}
+						else if (ev->code == input[dev].wh_clutch)
+						{
+							joy_analog(input[dev].num, 0, wh_value, 1);
+						}
+						else if (ev->code == input[dev].wh_combo)
+						{
+							if (value < -1) joy_analog(input[dev].num, 1, value, 0);
+							else if (value > 1) joy_analog(input[dev].num, 1, -value, 1);
+							else
+							{
+								joy_analog(input[dev].num, 1, 0, 0);
+								joy_analog(input[dev].num, 1, 0, 0);
+							}
+						}
+					}
+					else if (ev->code == 0 && input[dev].lightgun)
 					{
 						joy_analog(input[dev].num, 0, value);
 					}
@@ -3948,6 +4005,134 @@ static void set_rumble(int dev, uint16_t rumble_val)
 	}
 }
 
+static void set_wheel_range(int dev, int range)
+{
+	static char path[1024];
+	if (range && input[dev].sysfs[0])
+	{
+		sprintf(path, "/sys%s/device/range", input[dev].sysfs);
+
+		FILE* f = fopen(path, "w");
+		if (f)
+		{
+			fprintf(f, "%d", range);
+			fclose(f);
+		}
+	}
+}
+
+static void setup_wheels()
+{
+	if (cfg.wheel_force > 100) cfg.wheel_force = 100;
+
+	for (int i = 0; i < NUMDEV; i++)
+	{
+		if (pool[i].fd != -1)
+		{
+			input[i].wh_steer = 0;
+			input[i].wh_accel = -1;
+			input[i].wh_break = -1;
+			input[i].wh_clutch = -1;
+			input[i].wh_combo = -1;
+
+			// Logitech Wheels
+			if (input[i].vid == 0x046d)
+			{
+				switch (input[i].pid)
+				{
+				case 0xc299: // LOGITECH_G25_WHEEL
+				case 0xc29b: // LOGITECH_G27_WHEEL
+				case 0xc24f: // LOGITECH_G29_WHEEL
+					input[i].wh_accel = 2;
+					input[i].wh_break = 5;
+					input[i].wh_clutch = 1;
+					input[i].quirk = QUIRK_WHEEL;
+					break;
+
+				case 0xc294: // LOGITECH_WHEEL
+					input[i].wh_combo = 1;
+					input[i].quirk = QUIRK_WHEEL;
+					break;
+
+				case 0xc298: // LOGITECH_DFP_WHEEL
+					input[i].wh_accel = 1;
+					input[i].wh_break = 5;
+					input[i].quirk = QUIRK_WHEEL;
+					break;
+
+				case 0xc29a: // LOGITECH_DFGT_WHEEL
+					input[i].wh_accel = 1;
+					input[i].wh_break = 2;
+					input[i].quirk = QUIRK_WHEEL;
+					break;
+
+				//case 0xc262: // LOGITECH_G920_WHEEL
+				//case 0xc295: // LOGITECH_MOMO_WHEEL
+				}
+
+				if (input[i].quirk == QUIRK_WHEEL)
+				{
+					struct input_event ie = {};
+					ie.type = EV_FF;
+					ie.code = FF_AUTOCENTER;
+					ie.value = 0xFFFFUL * cfg.wheel_force / 100;
+					write(pool[i].fd, &ie, sizeof(ie));
+
+					set_wheel_range(i, cfg.wheel_range);
+				}
+			}
+
+			// Fanatec Wheels
+			else if (input[i].vid == 0x0eb7)
+			{
+				switch (input[i].pid)
+				{
+				case 0x0004:   // CLUBSPORT_V25_WHEELBASE_DEVICE_ID
+				case 0x0006:   // PODIUM_WHEELBASE_DD1_DEVICE_ID
+				case 0x0007:   // PODIUM_WHEELBASE_DD2_DEVICE_ID
+					input[i].wh_accel = 2;
+					input[i].wh_break = 5;
+					input[i].wh_clutch = 1;
+					input[i].quirk = QUIRK_WHEEL;
+					break;
+
+				//case 0x0001: // CLUBSPORT_V2_WHEELBASE_DEVICE_ID
+				//case 0x0005: // CSL_ELITE_PS4_WHEELBASE_DEVICE_ID
+				//case 0x0011: // CSR_ELITE_WHEELBASE_DEVICE_ID
+				//case 0x0020: // CSL_DD_WHEELBASE_DEVICE_ID
+				//case 0x0E03: // CSL_ELITE_WHEELBASE_DEVICE_ID
+				}
+
+				if (input[i].quirk == QUIRK_WHEEL)
+				{
+					struct ff_effect fef;
+					fef.type = FF_SPRING;
+					fef.id = -1;
+					fef.u.condition[0].right_saturation = 0xFFFFUL * cfg.wheel_force / 100;
+					fef.u.condition[0].left_saturation = 0xFFFFUL * cfg.wheel_force / 100;
+					fef.u.condition[0].right_coeff = 0x7FFF;
+					fef.u.condition[0].left_coeff = 0x7FFF;
+					fef.u.condition[0].deadband = 0x0;
+					fef.u.condition[0].center = 0x0;
+					fef.u.condition[1] = fef.u.condition[0];
+					fef.replay.delay = 0;
+
+					if (ioctl(pool[i].fd, EVIOCSFF, &fef) >= 0)
+					{
+						struct input_event play_ev;
+						play_ev.type = EV_FF;
+						play_ev.code = fef.id;
+						play_ev.value = 1;
+						write(pool[i].fd, (const void *)&play_ev, sizeof(play_ev));
+					}
+
+					set_wheel_range(i, cfg.wheel_range);
+				}
+			}
+		}
+	}
+}
+
 int input_test(int getchar)
 {
 	static char cur_leds = 0;
@@ -4170,7 +4355,7 @@ int input_test(int getchar)
 						{
 							input[n].lightgun = 1;
 						}
-						
+
 						//Namco Guncon via RetroZord adapter
 						if (input[n].vid == 0x2341 && input[n].pid == 0x8036 && (strstr(uniq, "RZordPsGun") || strstr(input[n].name, "RZordPsGun")))
 						{
@@ -4276,6 +4461,7 @@ int input_test(int getchar)
 
 			mergedevs();
 			check_joycon();
+			setup_wheels();
 			for (int i = 0; i < n; i++)
 			{
 				printf("opened %d(%2d): %s (%04x:%04x) %d \"%s\" \"%s\"\n", i, input[i].bind, input[i].devname, input[i].vid, input[i].pid, input[i].quirk, input[i].id, input[i].name);
@@ -4681,7 +4867,7 @@ int input_test(int getchar)
 									}
 								}
 
-								if (ev.type == EV_ABS && (input[i].quirk == QUIRK_LIGHTGUN_CRT || input[i].quirk == QUIRK_LIGHTGUN))
+								if (ev.type == EV_ABS && input[i].quirk == QUIRK_LIGHTGUN)
 								{
 									menu_lightgun_cb(i, ev.type, ev.code, ev.value);
 
@@ -4694,6 +4880,60 @@ int input_test(int getchar)
 									{
 										absinfo.minimum = input[i].guncal[0];
 										absinfo.maximum = input[i].guncal[1];
+									}
+								}
+
+								if (ev.type == EV_ABS && input[i].quirk == QUIRK_LIGHTGUN_CRT)
+								{
+									menu_lightgun_cb(i, ev.type, ev.code, ev.value);
+
+									if (ev.code == ABS_X)
+									{
+										absinfo.minimum = input[i].guncal[2];
+										absinfo.maximum = input[i].guncal[3];
+
+										// When the gun loses tracking, give it a short grace period
+										// before passing through the off-screen coordinates.
+										// The GunCon 1 and 2 both report out-of-screen x values
+										// more reliably than Y values, so X is used here.
+										if (ev.value < absinfo.minimum || ev.value > absinfo.maximum)
+										{
+											// Grace period of 50 ms. Longer times here make guns a bit
+											// more reliable on dark screens, but introduce lag to any mechanics
+											// where you want to shoot offscreen (e.g., to reload.)
+											if (!crtgun_timeout[i]) crtgun_timeout[i] = GetTimer(50);
+										}
+										else
+										{
+											crtgun_timeout[i] = 0;
+											input[i].lastx = ev.value;
+										}
+										// For the window between losing the gun signal and the timer
+										// running out, report the last on-screen coordinate
+										if (crtgun_timeout[i] && !CheckTimer(crtgun_timeout[i]))
+										{
+											ev.value = input[i].lastx;
+										}
+									}
+									else if (ev.code == ABS_Y)
+									{
+										absinfo.minimum = input[i].guncal[0];
+										absinfo.maximum = input[i].guncal[1];
+
+										// Handle gun going off-screen
+										if (crtgun_timeout[i])
+										{
+											// For the window between losing the gun signal and the timer
+											// running out, report the last on-screen coordinate
+											if (!CheckTimer(crtgun_timeout[i]))
+											{
+												ev.value = input[i].lasty;
+											}
+										}
+										else
+										{
+											input[i].lasty = ev.value;
+										}
 									}
 								}
 
