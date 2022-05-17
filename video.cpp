@@ -20,6 +20,7 @@
 #include "video.h"
 #include "input.h"
 #include "shmem.h"
+#include "smbus.h"
 
 #include "support.h"
 #include "lib/imlib2/Imlib2.h"
@@ -65,33 +66,34 @@ struct vmode_t
 {
 	uint32_t vpar[8];
 	double Fpix;
+	uint8_t vic_mode;
 };
 
 vmode_t vmodes[] =
 {
-	{ { 1280, 110,  40, 220,  720,  5,  5, 20 },  74.25  }, //0
-	{ { 1024,  24, 136, 160,  768,  3,  6, 29 },  65     }, //1
-	{ {  720,  16,  62,  60,  480,  9,  6, 30 },  27     }, //2
-	{ {  720,  12,  64,  68,  576,  5,  5, 39 },  27     }, //3
-	{ { 1280,  48, 112, 248, 1024,  1,  3, 38 }, 108     }, //4
-	{ {  800,  40, 128,  88,  600,  1,  4, 23 },  40     }, //5
-	{ {  640,  16,  96,  48,  480, 10,  2, 33 },  25.175 }, //6
-	{ { 1280, 440,  40, 220,  720,  5,  5, 20 },  74.25  }, //7
-	{ { 1920,  88,  44, 148, 1080,  4,  5, 36 }, 148.5   }, //8
-	{ { 1920, 528,  44, 148, 1080,  4,  5, 36 }, 148.5   }, //9
-	{ { 1366,  70, 143, 213,  768,  3,  3, 24 },  85.5   }, //10
-	{ { 1024,  40, 104, 144,  600,  1,  3, 18 },  48.96  }, //11
-	{ { 1920,  48,  32,  80, 1440,  2,  4, 38 }, 185.203 }, //12
-	{ { 2048,  48,  32,  80, 1536,  2,  4, 38 }, 209.318 }, //13
+	{ { 1280, 110,  40, 220,  720,  5,  5, 20 },  74.25,  4 }, //0  1280x720@60
+	{ { 1024,  24, 136, 160,  768,  3,  6, 29 },  65,     0 }, //1  1024x768@60
+	{ {  720,  16,  62,  60,  480,  9,  6, 30 },  27,     3 }, //2  720x480@60
+	{ {  720,  12,  64,  68,  576,  5,  5, 39 },  27,    18 }, //3  720x576@50
+	{ { 1280,  48, 112, 248, 1024,  1,  3, 38 }, 108,     0 }, //4  1280x1024@60
+	{ {  800,  40, 128,  88,  600,  1,  4, 23 },  40,     0 }, //5  800x600@60
+	{ {  640,  16,  96,  48,  480, 10,  2, 33 },  25.175, 1 }, //6  640x480@60
+	{ { 1280, 440,  40, 220,  720,  5,  5, 20 },  74.25, 19 }, //7  1280x720@50
+	{ { 1920,  88,  44, 148, 1080,  4,  5, 36 }, 148.5,  16 }, //8  1920x1080@60
+	{ { 1920, 528,  44, 148, 1080,  4,  5, 36 }, 148.5,  31 }, //9  1920x1080@50
+	{ { 1366,  70, 143, 213,  768,  3,  3, 24 },  85.5,   0 }, //10 1366x768@60
+	{ { 1024,  40, 104, 144,  600,  1,  3, 18 },  48.96,  0 }, //11 1024x600@60
+	{ { 1920,  48,  32,  80, 1440,  2,  4, 38 }, 185.203, 0 }, //12 1920x1440@60
+	{ { 2048,  48,  32,  80, 1536,  2,  4, 38 }, 209.318, 0 }, //13 2048x1536@60
 };
 #define VMODES_NUM (sizeof(vmodes) / sizeof(vmodes[0]))
 
 vmode_t tvmodes[] =
 {
-	{{ 640, 30, 60, 70, 240,  4, 4, 14 }, 12.587 }, //NTSC 15K
-	{{ 640, 16, 96, 48, 480,  8, 4, 33 }, 25.175 }, //NTSC 31K
-	{{ 640, 30, 60, 70, 288,  6, 4, 14 }, 12.587 }, //PAL 15K
-	{{ 640, 16, 96, 48, 576,  2, 4, 42 }, 25.175 }, //PAL 31K
+	{{ 640, 30, 60, 70, 240,  4, 4, 14 }, 12.587, 0 }, //NTSC 15K
+	{{ 640, 16, 96, 48, 480,  8, 4, 33 }, 25.175, 0 }, //NTSC 31K
+	{{ 640, 30, 60, 70, 288,  6, 4, 14 }, 12.587, 0 }, //PAL 15K
+	{{ 640, 16, 96, 48, 576,  2, 4, 42 }, 25.175, 0 }, //PAL 31K
 };
 
 struct vmode_custom_t
@@ -883,6 +885,189 @@ void video_loadPreset(char *name)
 	}
 }
 
+static void hdmi_config()
+{
+	int ypbpr = cfg.ypbpr && cfg.direct_video;
+	const uint8_t vic_mode = (uint8_t)v_cur.item[23];
+
+	// address, value
+	uint8_t init_data[] = {
+		0x98, 03,				// ADI required Write.
+
+		0xD6, 0b11000000,		// [7:6] HPD Control...
+								// 00 = HPD is from both HPD pin or CDC HPD
+								// 01 = HPD is from CDC HPD
+								// 10 = HPD is from HPD pin
+								// 11 = HPD is always high
+
+		0x41, 0x10,				// Power Down control
+		0x9A, 0x70,				// ADI required Write.
+		0x9C, 0x30,				// ADI required Write.
+		0x9D, 0b01100001,		// [7:4] must be b0110!.
+								// [3:2] b00 = Input clock not divided. b01 = Clk divided by 2. b10 = Clk divided by 4. b11 = invalid!
+								// [1:0] must be b01!
+		0xA2, 0xA4,				// ADI required Write.
+		0xA3, 0xA4,				// ADI required Write.
+		0xE0, 0xD0,				// ADI required Write.
+
+
+		0x35, 0x40,
+		0x36, 0xD9,
+		0x37, 0x0A,
+		0x38, 0x00,
+		0x39, 0x2D,
+		0x3A, 0x00,
+
+		0x16, 0b00111000,		// Output Format 444 [7]=0.
+								// [6] must be 0!
+								// Colour Depth for Input Video data [5:4] b11 = 8-bit.
+								// Input Style [3:2] b10 = Style 1 (ignored when using 444 input).
+								// DDR Input Edge falling [1]=0 (not using DDR atm).
+								// Output Colour Space RGB [0]=0.
+
+		0x17, 0b01100010,		// Aspect ratio 16:9 [1]=1, 4:3 [1]=0
+
+		0x18, (uint8_t)(ypbpr ? 0x86 : (cfg.hdmi_limited & 1) ? 0x8D : (cfg.hdmi_limited & 2) ? 0x8E : 0x00),  // CSC Scaling Factors and Coefficients for RGB Full->Limited.
+		0x19, (uint8_t)(ypbpr ? 0xDF : (cfg.hdmi_limited & 1) ? 0xBC : 0xFE),                       // Taken from table in ADV7513 Programming Guide.
+		0x1A, (uint8_t)(ypbpr ? 0x1A : 0x00),         // CSC Channel A.
+		0x1B, (uint8_t)(ypbpr ? 0x3F : 0x00),
+		0x1C, (uint8_t)(ypbpr ? 0x1E : 0x00),
+		0x1D, (uint8_t)(ypbpr ? 0xE2 : 0x00),
+		0x1E, (uint8_t)(ypbpr ? 0x07 : 0x01),
+		0x1F, (uint8_t)(ypbpr ? 0xE7 : 0x00),
+
+		0x20, (uint8_t)(ypbpr ? 0x04 : 0x00),         // CSC Channel B.
+		0x21, (uint8_t)(ypbpr ? 0x1C : 0x00),
+		0x22, (uint8_t)(ypbpr ? 0x08 : (cfg.hdmi_limited & 1) ? 0x0D : 0x0E),
+		0x23, (uint8_t)(ypbpr ? 0x11 : (cfg.hdmi_limited & 1) ? 0xBC : 0xFE),
+		0x24, (uint8_t)(ypbpr ? 0x01 : 0x00),
+		0x25, (uint8_t)(ypbpr ? 0x91 : 0x00),
+		0x26, (uint8_t)(ypbpr ? 0x01 : 0x01),
+		0x27, 0x00,
+
+		0x28, (uint8_t)(ypbpr ? 0x1D : 0x00),         // CSC Channel C.
+		0x29, (uint8_t)(ypbpr ? 0xAE : 0x00),
+		0x2A, (uint8_t)(ypbpr ? 0x1B : 0x00),
+		0x2B, (uint8_t)(ypbpr ? 0x73 : 0x00),
+		0x2C, (uint8_t)(ypbpr ? 0x06 : (cfg.hdmi_limited & 1) ? 0x0D : 0x0E),
+		0x2D, (uint8_t)(ypbpr ? 0xDF : (cfg.hdmi_limited & 1) ? 0xBC : 0xFE),
+		0x2E, (uint8_t)(ypbpr ? 0x07 : 0x01),
+		0x2F, (uint8_t)(ypbpr ? 0xE7 : 0x00),
+
+		0x3B, 0b01000000,       // Pixel repetition [6:5] b00 AUTO. [4:3] b00 x1 mult of input clock. [2:1] b00 x1 pixel rep to send to HDMI Rx.
+								// Pixel repetition set to manual to avoid VIC auto detection as defined in ADV7513 Programming Guide
+
+		0x40, 0x00,				// General Control Packet Enable
+
+		0x48, 0b00001000,       // [6]=0 Normal bus order!
+								// [5] DDR Alignment.
+								// [4:3] b01 Data right justified (for YCbCr 422 input modes).
+
+		0x49, 0xA8,				// ADI required Write.
+		0x4C, 0x00,				// ADI required Write.
+
+		0x55, 0b00010010,       // [7] must be 0!. Set RGB444 in AVinfo Frame [6:5], Set active format [4].
+								// AVI InfoFrame Valid [4].
+								// Bar Info [3:2] b00 Bars invalid. b01 Bars vertical. b10 Bars horizontal. b11 Bars both.
+								// Scan Info [1:0] b00 (No data). b01 TV. b10 PC. b11 None.
+
+		0x56, 0b00001000,		// [5:4] Picture Aspect Ratio
+								// [3:0] Active Portion Aspect Ratio b1000 = Same as Picture Aspect Ratio
+
+		0x57, (uint8_t)((cfg.hdmi_game_mode ? 0x80 : 0x00) // [7] IT Content. 0 - No. 1 - Yes (type set in register 0x59).
+								// [6:4] Color space (ignored for RGB)
+			| ((ypbpr || cfg.hdmi_limited) ? 0b0100 : 0b1000)), // [3:2] RGB Quantization range
+								// [1:0] Non-Uniform Scaled: 00 - None. 01 - Horiz. 10 - Vert. 11 - Both.
+
+		0x3C, vic_mode,			// VIC
+
+		0x59, (uint8_t)(((ypbpr || cfg.hdmi_limited) ? 0x00 : 0x40) // [7:6] [YQ1 YQ0] YCC Quantization Range: b00 = Limited Range, b01 = Full Range
+			| 0x30),			// [5:4] IT Content Type b11 = Game
+								// [3:0] Pixel Repetition Fields b0000 = No Repetition
+
+		0x73, 0x01,
+
+		0x94, 0b10000000,       // [7]=1 HPD Interrupt ENabled.
+
+		0x99, 0x02,				// ADI required Write.
+		0x9B, 0x18,				// ADI required Write.
+
+		0x9F, 0x00,				// ADI required Write.
+
+		0xA1, 0b00000000,	    // [6]=1 Monitor Sense Power Down DISabled.
+
+		0xA4, 0x08,				// ADI required Write.
+		0xA5, 0x04,				// ADI required Write.
+		0xA6, 0x00,				// ADI required Write.
+		0xA7, 0x00,				// ADI required Write.
+		0xA8, 0x00,				// ADI required Write.
+		0xA9, 0x00,				// ADI required Write.
+		0xAA, 0x00,				// ADI required Write.
+		0xAB, 0x40,				// ADI required Write.
+
+		0xAF, (uint8_t)(0b00000100	// [7]=0 HDCP Disabled.
+								// [6:5] must be b00!
+								// [4]=0 Current frame is unencrypted
+								// [3:2] must be b01!
+			| (cfg.dvi ? 0b00 : 0b10)),	 //	[1]=1 HDMI Mode.
+								// [0] must be b0!
+
+		0xB9, 0x00,				// ADI required Write.
+
+		0xBA, 0b01100000,		// [7:5] Input Clock delay...
+								// b000 = -1.2ns.
+								// b001 = -0.8ns.
+								// b010 = -0.4ns.
+								// b011 = No delay.
+								// b100 = 0.4ns.
+								// b101 = 0.8ns.
+								// b110 = 1.2ns.
+								// b111 = 1.6ns.
+
+		0xBB, 0x00,				// ADI required Write.
+
+		0xDE, 0x9C,				// ADI required Write.
+		0xE4, 0x60,				// ADI required Write.
+		0xFA, 0x7D,				// Nbr of times to search for good phase
+
+		// (Audio stuff on Programming Guide, Page 66)...
+		0x0A, 0b00000000,		// [6:4] Audio Select. b000 = I2S.
+								// [3:2] Audio Mode. (HBR stuff, leave at 00!).
+
+		0x0B, 0b00001110,		//
+
+		0x0C, 0b00000100,		// [7] 0 = Use sampling rate from I2S stream.   1 = Use samp rate from I2C Register.
+								// [6] 0 = Use Channel Status bits from stream. 1 = Use Channel Status bits from I2C register.
+								// [2] 1 = I2S0 Enable.
+								// [1:0] I2S Format: 00 = Standard. 01 = Right Justified. 10 = Left Justified. 11 = AES.
+
+		0x0D, 0b00010000,		// [4:0] I2S Bit (Word) Width for Right-Justified.
+		0x14, 0b00000010,		// [3:0] Audio Word Length. b0010 = 16 bits.
+		0x15, (uint8_t)((cfg.hdmi_audio_96k ? 0x80 : 0x00) | 0b0100000),	// I2S Sampling Rate [7:4]. b0000 = (44.1KHz). b0010 = 48KHz.
+								// Input ID [3:1] b000 (0) = 24-bit RGB 444 or YCrCb 444 with Separate Syncs.
+
+		// Audio Clock Config
+		0x01, 0x00,				//
+		0x02, (uint8_t)(cfg.hdmi_audio_96k ? 0x30 : 0x18),	// Set N Value 12288/6144
+		0x03, 0x00,				//
+
+		0x07, 0x01,				//
+		0x08, 0x22,				// Set CTS Value 74250
+		0x09, 0x0A,				//
+	};
+
+	int fd = i2c_open(0x39, 0);
+	if (fd >= 0)
+	{
+		for (uint i = 0; i < sizeof(init_data); i += 2)
+		{
+			int res = i2c_smbus_write_byte_data(fd, init_data[i], init_data[i + 1]);
+			if (res < 0) printf("i2c: write error (%02X %02X): %d\n", init_data[i], init_data[i + 1], res);
+		}
+		i2c_close(fd);
+	}
+}
+
 static char fb_reset_cmd[128] = {};
 static void set_video(vmode_custom_t *v, double Fpix)
 {
@@ -928,7 +1113,7 @@ static void set_video(vmode_custom_t *v, double Fpix)
 	for (int i = 9; i < 21; i++)
 	{
 		printf("0x%X, ", v_cur.item[i]);
-		if (i & 1) spi_w(v_cur.item[i] | ((i == 9 && Fpix && cfg.vsync_adjust == 2 && !is_menu()) ? 0x8000 : 0));
+		if (i & 1) spi_w(v_cur.item[i] | ((i == 9 && Fpix && cfg.vsync_adjust == 2 && !is_menu()) ? 0x8000 : 0) | 0x4000);
 		else
 		{
 			spi_w(v_cur.item[i]);
@@ -938,6 +1123,8 @@ static void set_video(vmode_custom_t *v, double Fpix)
 
 	printf("Fpix=%f\n", v_cur.Fpix);
 	DisableIO();
+
+	hdmi_config();
 
 	if (cfg.fb_size <= 1) cfg.fb_size = ((v_cur.item[1] * v_cur.item[5]) <= FB_SIZE) ? 1 : 2;
 	else if (cfg.fb_size == 3) cfg.fb_size = 2;
@@ -1024,12 +1211,16 @@ static int parse_custom_video_mode(char* vcfg, vmode_custom_t *v)
 
 static int store_custom_video_mode(char* vcfg, vmode_custom_t *v)
 {
+	memset(v, 0, sizeof(vmode_custom_t));
+	
 	int ret = parse_custom_video_mode(vcfg, v);
 	if (ret == -2) return 1;
 
 	uint mode = (ret < 0) ? 0 : ret;
 	if (mode >= VMODES_NUM) mode = 0;
 	for (int i = 0; i < 8; i++) v->item[i + 1] = vmodes[mode].vpar[i];
+	v->item[23] = vmodes[mode].vic_mode;
+
 	setPLL(vmodes[mode].Fpix, v);
 
 	return ret >= 0;
