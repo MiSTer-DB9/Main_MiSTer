@@ -73,6 +73,7 @@
 #define UIO_ASTICK_2    0x3D
 #define UIO_SHADOWMASK  0x3E
 #define UIO_GET_RUMBLE  0x3F
+#define UIO_GET_FB_PAR  0x40
 
 // codes as used by 8bit for file loading from OSD
 #define FIO_FILE_TX     0x53
@@ -274,6 +275,7 @@ char is_c64();
 char is_st();
 char is_psx();
 char is_arcade();
+char is_saturn();
 
 #define HomeDir(x) user_io_get_core_path(x)
 #define CoreName user_io_get_core_name()
