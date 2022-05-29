@@ -287,6 +287,14 @@ char is_electron()
 	return (is_electron_type == 1);
 }
 
+static int is_saturn_type = 0;
+char is_saturn()
+{
+	if (!is_saturn_type) is_saturn_type = strcasecmp(core_name, "Saturn") ? 2 : 1;
+	return (is_saturn_type == 1);
+}
+
+
 static int is_no_type = 0;
 static int disable_osd = 0;
 char has_menu()
@@ -1715,7 +1723,7 @@ int process_ss(const char *rom_name, int enable)
 			}
 			else
 			{
-				ss_cnt[i] = 0;
+				ss_cnt[i] = 0xFFFFFFFF;
 				memset(base[i], 0, len);
 
 				if (!i)
@@ -1739,11 +1747,10 @@ int process_ss(const char *rom_name, int enable)
 					{
 						int ret = FileReadAdv(&f, base[i], len);
 						FileClose(&f);
-						*(uint32_t*)(base[i]) = 1;
-						ss_cnt[i] = 1;
 						printf("process_ss: read %d bytes from file: %s\n", ret, ss_name);
 					}
 				}
+				*(uint32_t*)(base[i]) = 0xFFFFFFFF;
 			}
 
 			map_addr += len;
@@ -2737,7 +2744,7 @@ void user_io_send_buttons(char force)
 	if (cfg.ypbpr) map |= CONF_YPBPR;
 	if (cfg.forced_scandoubler) map |= CONF_FORCED_SCANDOUBLER;
 	if (cfg.hdmi_audio_96k) map |= CONF_AUDIO_96K;
-	if (cfg.dvi) map |= CONF_DVI;
+	if (cfg.dvi_mode == 1) map |= CONF_DVI;
 	if (cfg.hdmi_limited & 1) map |= CONF_HDMI_LIMITED1;
 	if (cfg.hdmi_limited & 2) map |= CONF_HDMI_LIMITED2;
 	if (cfg.direct_video) map |= CONF_DIRECT_VIDEO;
@@ -2761,6 +2768,7 @@ void user_io_send_buttons(char force)
 			if (is_minimig()) minimig_reset();
 			if (is_megacd()) mcd_reset();
 			if (is_pce()) pcecd_reset();
+			if (is_saturn()) saturn_reset();
 			if (is_x86()) x86_init();
 			ResetUART();
 		}
@@ -3082,6 +3090,10 @@ void user_io_poll()
 							else if (is_psx())
 							{
 								psx_fill_blanksave(buffer[disk], lba, blks);
+							}
+							else if (is_saturn())
+							{
+								saturn_fill_blanksave(buffer[disk], lba);
 							}
 							else
 							{
@@ -3419,6 +3431,8 @@ void user_io_poll()
 
 	if (is_megacd()) mcd_poll();
 	if (is_pce()) pcecd_poll();
+	if (is_saturn()) saturn_poll();
+	if (is_psx()) psx_poll();
 	process_ss(0);
 }
 
