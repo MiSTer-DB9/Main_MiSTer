@@ -50,7 +50,7 @@ static const ini_var_t ini_vars[] =
 	{ "KBD_NOMOUSE", (void*)(&(cfg.kbd_nomouse)), UINT8, 0, 1 },
 	{ "MOUSE_THROTTLE", (void*)(&(cfg.mouse_throttle)), UINT8, 1, 100 },
 	{ "BOOTSCREEN", (void*)(&(cfg.bootscreen)), UINT8, 0, 1 },
-	{ "VSCALE_MODE", (void*)(&(cfg.vscale_mode)), UINT8, 0, 6 },
+	{ "VSCALE_MODE", (void*)(&(cfg.vscale_mode)), UINT8, 0, 5 },
 	{ "VSCALE_BORDER", (void*)(&(cfg.vscale_border)), UINT16, 0, 399 },
 	{ "RBF_HIDE_DATECODE", (void*)(&(cfg.rbf_hide_datecode)), UINT8, 0, 1 },
 	{ "MENU_PAL", (void*)(&(cfg.menu_pal)), UINT8, 0, 1 },
@@ -96,6 +96,10 @@ static const ini_var_t ini_vars[] =
 	{ "WHEEL_FORCE", (void*)(&(cfg.wheel_force)), UINT8, 0, 100 },
 	{ "WHEEL_RANGE", (void*)(&(cfg.wheel_range)), UINT16, 0, 1000 },
 	{ "HDMI_GAME_MODE", (void *)(&(cfg.hdmi_game_mode)), UINT8, 0, 1},
+	{ "VRR_MODE", (void *)(&(cfg.vrr_mode)), UINT8, 0, 3},
+	{ "VRR_MIN_FRAMERATE", (void *)(&(cfg.vrr_min_framerate)), UINT8, 0, 255},
+	{ "VRR_MAX_FRAMERATE", (void *)(&(cfg.vrr_max_framerate)), UINT8, 0, 255},
+	{ "VRR_VESA_FRAMERATE", (void *)(&(cfg.vrr_vesa_framerate)), UINT8, 0, 255},
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));

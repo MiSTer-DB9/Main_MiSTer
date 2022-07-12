@@ -210,7 +210,7 @@ const char *config_scanlines_msg[] = { "Off", "HQ2x", "CRT 25%" , "CRT 50%" , "C
 const char *config_blank_msg[] = { "Blank", "Blank+" };
 const char *config_dither_msg[] = { "off", "SPT", "RND", "S+R" };
 const char *config_autofire_msg[] = { "        AUTOFIRE OFF", "        AUTOFIRE FAST", "        AUTOFIRE MEDIUM", "        AUTOFIRE SLOW" };
-const char *config_cd32pad_msg[] = { "OFF", "ON" };
+const char *config_joystick_mode[] = { "Digital", "Analog", "CD32", "Analog" };
 const char *config_button_turbo_msg[] = { "OFF", "FAST", "MEDIUM", "SLOW" };
 const char *config_button_turbo_choice_msg[] = { "A only", "B only", "A & B" };
 const char *joy_button_map[] = { "RIGHT", "LEFT", "DOWN", "UP", "BUTTON A", "BUTTON B", "BUTTON X", "BUTTON Y", "BUTTON L", "BUTTON R", "SELECT", "START", "KBD TOGGLE", "MENU", "    Stick 1: Tilt RIGHT", "    Stick 1: Tilt DOWN", "   Mouse emu X: Tilt RIGHT", "   Mouse emu Y: Tilt DOWN" };
@@ -264,8 +264,8 @@ static const uint32_t helptext_timeouts[] =
 	10000,
 	10000,
 	10000,
-	2000,
-	2000
+	10000,
+	10000
 };
 
 static const char *info_top = "\x80\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x81\x82";
@@ -625,6 +625,7 @@ static void printSysInfo()
 		struct battery_data_t bat;
 		int hasbat = getBattery(0, &bat);
 		int n = 2;
+		static int flip = 0;
 
 		char str[40];
 		OsdWrite(n++, info_top, 0, 0);
@@ -648,7 +649,8 @@ static void printSysInfo()
 		if (!j) infowrite(n++, "No network");
 		if (j<2) infowrite(n++, "");
 
-		if (hasbat)
+		flip = (flip + 1) & 3;
+		if (hasbat && (flip & 2))
 		{
 			infowrite(n++, "");
 
@@ -1295,6 +1297,7 @@ void HandleUI(void)
 		if (menu || (is_menu() && !video_fb_state()) || (menustate == MENU_NONE2 && !mgl->done && mgl->state == 1))
 		{
 			OsdSetSize(16);
+			menusub = 0;
 			if(!is_menu() && (get_key_mod() & (LALT | RALT))) //Alt+Menu
 			{
 				SelectFile("", 0, SCANO_CORES, MENU_CORE_FILE_SELECTED1, MENU_NONE1);
@@ -1302,13 +1305,13 @@ void HandleUI(void)
 			else if (saved_menustate)
 			{
 				menustate = saved_menustate;
-				menusub = 0;
 			}
 			else if (is_st()) menustate = MENU_ST_MAIN1;
 			else if (is_archie()) menustate = MENU_ARCHIE_MAIN1;
 			else {
 				if (is_menu())
 				{
+					menusub = 6;
 					SelectFile("", 0, SCANO_CORES, MENU_CORE_FILE_SELECTED1, MENU_SYSTEM1);
 				}
 				else if (is_minimig())
@@ -1328,7 +1331,6 @@ void HandleUI(void)
 					}
 				}
 			}
-			menusub = 0;
 			OsdClear();
 			if (!mgl->done) OsdDisable();
 			else OsdEnable(DISABLE_KEYBOARD);
@@ -4724,7 +4726,7 @@ void HandleUI(void)
 
 		if (flist_nDirEntries())
 		{
-			ScrollLongName(); // scrolls file name if longer than display line
+			if (!helpstate || ((flist_iSelectedEntry() - flist_iFirstEntry() + 1) < OsdGetSize())) ScrollLongName(); // scrolls file name if longer than display line
 
 			if (c == KEY_HOME || c == KEY_TAB)
 			{
@@ -5506,8 +5508,8 @@ void HandleUI(void)
 		OsdWrite(m++, s, menusub == 5, 0);
 
 		OsdWrite(m++, "", 0, 0);
-		strcpy(s, " CD32 Pad : ");
-		strcat(s, config_cd32pad_msg[(minimig_config.autofire >> 2) & 1]);
+		strcpy(s, " Joystick : ");
+		strcat(s, config_joystick_mode[(minimig_config.autofire & 6) >> 1]);
 		OsdWrite(m++, s, menusub == 6, 0);
 
 		OsdWrite(m++, "", 0, 0);
@@ -5634,9 +5636,21 @@ void HandleUI(void)
 			}
 			else if (menusub == 6)
 			{
-				minimig_config.autofire ^= 0x4;
+				uint8_t x = (minimig_config.autofire & 6) >> 1;
+				if (minus)
+				{
+					x = (x - 1) & 3;
+					if (x == 3) x = 2;
+				}
+				else
+				{
+					x = (x + 1) & 3;
+					if (x == 3) x = 0;
+				}
+
+				minimig_config.autofire = (minimig_config.autofire & ~6) | (x << 1);
 				menustate = MENU_MINIMIG_CHIPSET1;
-				minimig_ConfigAutofire(minimig_config.autofire, 0x4);
+				minimig_ConfigAutofire(minimig_config.autofire, 6);
 			}
 			else if (menusub == 7 && select)
 			{
@@ -6898,7 +6912,7 @@ int menu_lightgun_cb(int idx, uint16_t type, uint16_t code, int value)
 
 	if (type == EV_KEY)
 	{
-		if ((code == 0x130 || code == 0x131) && menustate == MENU_LGCAL1)
+		if ((code == 0x130 || code == 0x131 || code == 0x120) && menustate == MENU_LGCAL1)
 		{
 			gun_idx = idx;
 			if (value == 1) gun_ok = 1;
