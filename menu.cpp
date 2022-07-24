@@ -63,6 +63,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "support.h"
 #include "bootcore.h"
 #include "ide.h"
+#include "profiling.h"
 
 /*menu states*/
 enum MENU
@@ -899,6 +900,8 @@ static int page = 0;
 
 void HandleUI(void)
 {
+	PROFILE_FUNCTION();
+
 	if (bt_timer >= 0)
 	{
 		if (!bt_timer) bt_timer = (int32_t)GetTimer(6000);
@@ -4651,7 +4654,7 @@ void HandleUI(void)
 		OsdSetTitle((fs_Options & SCANO_CORES) ? "Cores" : "Select", 0);
 		PrintDirectory(hold_cnt<2);
 		menustate = MENU_FILE_SELECT2;
-		if (cfg.log_file_entry)
+		if (cfg.log_file_entry && flist_nDirEntries())
 		{
 			//Write out paths infos for external integration
 			FILE* filePtr = fopen("/tmp/CURRENTPATH", "w");
