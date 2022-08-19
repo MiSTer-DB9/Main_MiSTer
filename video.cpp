@@ -423,7 +423,7 @@ static bool read_video_filter(int type, VideoFilter *out)
 		out->is_adaptive = false;
 		valid = scale_phases(out->phases, phases, count);
 	}
-	
+
 	if (!valid)
 	{
 		// Make a default NN filter in case of error
@@ -649,7 +649,7 @@ static void loadScalerCfg()
 
 static char active_gamma_cfg[1024] = { 0 };
 static char gamma_cfg[1024] = { 0 };
-static char has_gamma = 0;
+static char has_gamma = 0; // set in video_init
 
 static void setGamma()
 {
@@ -660,15 +660,7 @@ static void setGamma()
 	fileTextReader reader = {};
 	static char filename[1024];
 
-	if (!spi_uio_cmd_cont(UIO_SET_GAMMA))
-	{
-		DisableIO();
-		return;
-	}
-
-	has_gamma = 1;
-	spi8(0);
-	DisableIO();
+	if (!has_gamma) return;
 
 	snprintf(filename, sizeof(filename), GAMMA_DIR"/%s", gamma_cfg + 1);
 
@@ -1160,9 +1152,9 @@ static void hdmi_config_init()
 			| ((ypbpr || cfg.hdmi_limited) ? 0b0100 : 0b1000)),	// [3:2] RGB Quantization range
 																// [1:0] Non-Uniform Scaled: 00 - None. 01 - Horiz. 10 - Vert. 11 - Both.
 
-		0x59, (uint8_t)(((ypbpr || cfg.hdmi_limited) ? 0x00 : 0x40)	// [7:6] [YQ1 YQ0] YCC Quantization Range: b00 = Limited Range, b01 = Full Range
-			| (cfg.hdmi_game_mode ? 0x30 : 0x00)),					// [5:4] IT Content Type b11 = Game, b00 = Graphics/None
-																	// [3:0] Pixel Repetition Fields b0000 = No Repetition
+		0x59, (uint8_t)(cfg.hdmi_game_mode ? 0x30 : 0x00),		// [7:6] [YQ1 YQ0] YCC Quantization Range: b00 = Limited Range, b01 = Full Range
+																// [5:4] IT Content Type b11 = Game, b00 = Graphics/None
+																// [3:0] Pixel Repetition Fields b0000 = No Repetition
 
 		0x73, 0x01,
 
@@ -1400,6 +1392,15 @@ static int get_active_edid()
 		printf("EDID: cannot find main i2c device\n");
 		return 0;
 	}
+
+	//Test if adv7513 senses hdmi clock. If not, don't bother with the edid query
+	int hpd_state = i2c_smbus_read_byte_data(fd, 0x42);
+	if (hpd_state < 0 || !(hpd_state & 0x20))
+	{
+		i2c_close(fd);
+		return 0;
+	}
+
 
 	for (int i = 0; i < 10; i++)
 	{
@@ -2003,6 +2004,8 @@ void video_init()
 	hdmi_config_init();
 	video_mode_load();
 
+	has_gamma = spi_uio_cmd(UIO_SET_GAMMA);
+
 	loadGammaCfg();
 	loadScalerCfg();
 	loadShadowMaskCfg();
@@ -2389,7 +2392,7 @@ void video_mode_adjust()
 		}
 		else if (cfg_has_video_sections()) // if we have video sections but aren't updating the resolution for other reasons, then do it here
 		{
-			video_set_mode(&v_def, 0); 
+			video_set_mode(&v_def, 0);
 			user_io_send_buttons(1);
 			force = true;
 		}
@@ -2892,54 +2895,57 @@ void video_menu_bg(int n, int idle)
 
 		draw_black();
 
-		switch (n)
+		if (idle < 3)
 		{
-		case 1:
-			if (!menubg) menubg = load_bg();
-			if (menubg)
+			switch (n)
 			{
-				imlib_context_set_image(menubg);
-				int src_w = imlib_image_get_width();
-				int src_h = imlib_image_get_height();
-				//printf("menubg: src_w=%d, src_h=%d\n", src_w, src_h);
+			case 1:
+				if (!menubg) menubg = load_bg();
+				if (menubg)
+				{
+					imlib_context_set_image(menubg);
+					int src_w = imlib_image_get_width();
+					int src_h = imlib_image_get_height();
+					//printf("menubg: src_w=%d, src_h=%d\n", src_w, src_h);
 
-				if (*bg)
-				{
-					imlib_context_set_image(*bg);
-					imlib_blend_image_onto_image(menubg, 0,
-						0, 0,                           //int source_x, int source_y,
-						src_w, src_h,                   //int source_width, int source_height,
-						brd_x, brd_y,                   //int destination_x, int destination_y,
-						fb_width - (brd_x * 2), fb_height - (brd_y * 2) //int destination_width, int destination_height
-					);
-					bg_has_picture = 1;
-					break;
+					if (*bg)
+					{
+						imlib_context_set_image(*bg);
+						imlib_blend_image_onto_image(menubg, 0,
+							0, 0,                           //int source_x, int source_y,
+							src_w, src_h,                   //int source_width, int source_height,
+							brd_x, brd_y,                   //int destination_x, int destination_y,
+							fb_width - (brd_x * 2), fb_height - (brd_y * 2) //int destination_width, int destination_height
+						);
+						bg_has_picture = 1;
+						break;
+					}
+					else
+					{
+						printf("*bg = 0!\n");
+					}
 				}
-				else
-				{
-					printf("*bg = 0!\n");
-				}
+				draw_checkers();
+				break;
+			case 2:
+				draw_hbars1();
+				break;
+			case 3:
+				draw_hbars2();
+				break;
+			case 4:
+				draw_vbars1();
+				break;
+			case 5:
+				draw_vbars2();
+				break;
+			case 6:
+				draw_spectrum();
+				break;
+			case 7:
+				draw_black();
+				break;
 			}
-			draw_checkers();
-			break;
-		case 2:
-			draw_hbars1();
-			break;
-		case 3:
-			draw_hbars2();
-			break;
-		case 4:
-			draw_vbars1();
-			break;
-		case 5:
-			draw_vbars2();
-			break;
-		case 6:
-			draw_spectrum();
-			break;
-		case 7:
-			draw_black();
-			break;
 		}
 
 		if (cfg.logo && logo && !idle)
