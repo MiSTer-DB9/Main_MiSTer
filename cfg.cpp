@@ -107,6 +107,13 @@ static const ini_var_t ini_vars[] =
 	{ "PLAYER_2_CONTROLLER", (void*)(&(cfg.player_controller[1])), STRING, 0, sizeof(cfg.player_controller[1]) - 1 },
 	{ "PLAYER_3_CONTROLLER", (void*)(&(cfg.player_controller[2])), STRING, 0, sizeof(cfg.player_controller[2]) - 1 },
 	{ "PLAYER_4_CONTROLLER", (void*)(&(cfg.player_controller[3])), STRING, 0, sizeof(cfg.player_controller[3]) - 1 },
+	{ "DISABLE_AUTOFIRE", (void *)(&(cfg.disable_autofire)), UINT8, 0, 1},
+	{ "VIDEO_BRIGHTNESS", (void *)(&(cfg.video_brightness)), UINT16, 0, 100},
+	{ "VIDEO_CONTRAST", (void *)(&(cfg.video_contrast)), UINT16, 0, 100},
+	{ "VIDEO_SATURATION", (void *)(&(cfg.video_saturation)), UINT16, 0, 100},
+	{ "VIDEO_HUE", (void *)(&(cfg.video_hue)), UINT16, 0, 360},
+	{ "VIDEO_GAIN_OFFSET", (void *)(&(cfg.video_gain_offset)), STRING, 0, sizeof(cfg.video_gain_offset)},
+	{ "HDR", (void*)(&cfg.hdr), UINT8, 0, 3 },
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
@@ -344,6 +351,7 @@ static void ini_parse_var(char* buf)
 			strncpy((char*)(var->var), &(buf[i]), var->max);
 			break;
 
+		case HEX32ARR:
 		case UINT32ARR:
 			{
 				uint32_t *arr = (uint32_t*)var->var;
@@ -438,6 +446,12 @@ void cfg_parse()
 	cfg.rumble = 1;
 	cfg.wheel_force = 50;
 	cfg.dvi_mode = 2;
+	cfg.hdr = 0;
+	cfg.video_brightness = 50;
+	cfg.video_contrast = 50;
+	cfg.video_saturation = 100;
+	cfg.video_hue = 0;
+	strcpy(cfg.video_gain_offset, "1, 0, 1, 0, 1, 0");
 	has_video_sections = false;
 	using_video_section = false;
 	cfg_error_count = 0;
