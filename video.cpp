@@ -1095,13 +1095,6 @@ static void hdmi_config_set_csc()
 		0.0f, 0.0f, 0.0f, 1.0f
 	};
 
-	float hdr_bt2020_coeffs[] = {
-		0.6274f, 0.3293f, 0.0433f, 0.0f,
-		0.0691f, 0.9195f, 0.0114f, 0.0f,
-		0.0164f, 0.0880f, 0.8956f, 0.0f,
-		0.0f, 0.0f, 0.0f, 1.0f
-	};
-
 	float hdr_dcip3_coeffs[] = {
 		0.8225f, 0.1774f, 0.0000f, 0.0f,
 		0.0332f, 0.9669f, 0.0000f, 0.0f,
@@ -1120,18 +1113,20 @@ static void hdmi_config_set_csc()
 	mat4x4 coeffs = hdmi_full_coeffs;
 
 	if (hdr == 1)
-		coeffs = hdr_bt2020_coeffs;
+		coeffs = hdmi_full_coeffs;
 	else if (hdr == 2)
 		coeffs = hdr_dcip3_coeffs;
-	else if (ypbpr)
-		coeffs = ypbpr_coeffs;
-	else if (hdmi_limited_1)
-		coeffs = hdmi_limited_1_coeffs;
-	else if (hdmi_limited_2)
-		coeffs = hdmi_limited_2_coeffs;
 	else
-		coeffs = hdmi_full_coeffs;
-
+	{
+		if (ypbpr)
+			coeffs = ypbpr_coeffs;
+		else if (hdmi_limited_1)
+			coeffs = hdmi_limited_1_coeffs;
+		else if (hdmi_limited_2)
+			coeffs = hdmi_limited_2_coeffs;
+		else
+			coeffs = hdmi_full_coeffs;
+	}
 	mat4x4 csc(coeffs);
 
 	// apply color controls
@@ -1481,38 +1476,44 @@ static void hdmi_config_init()
 
 static void hdmi_config_set_hdr()
 {
-	// 87:01:1a:74:02:00:c2:33:c4:86:4c:1d:b8:0b:d0:84:80 :3e:13:3d:42:40:e8:03:32:00:e8:03:90:01
+	// CTA-861-G: 6.9 Dynamic Range and Mastering InfoFrame
+	// Uses BT2020 RGB primaries and white point chromacity
+	// Max Lum: 1000cd/m2, Min Lum: 0cd/m2, MaxCLL: 1000cd/m2
+	// MaxFALL: 250cd/m2 (this value does not matter much -
+	// in essence it means that the display should expect -
+	// 25% of the image to be 1000cd/m2)
+	// If HDR == 1, use HLG
 	uint8_t hdr_data[] = {
 		0x87,
 		0x01,
 		0x1a,
-		0x74,
-		0x02,
-		0x00,
-		0xc2,
-		0x33,
-		0xc4,
-		0x86,
-		0x4c,
-		0x1d,
-		0xb8,
-		0x0b,
-		0xd0,
-		0x84,
-		0x80,
-		0x3e,
+		(cfg.hdr == 1 ? uint8_t(0x27) : uint8_t(0x28)),
+		(cfg.hdr == 1 ? uint8_t(0x03) : uint8_t(0x02)),
+		0x48,
+		0x8a,
+		0x08,
+		0x39,
+		0x34,
+		0x21,
+		0xaa,
+		0x9b,
+		0x96,
+		0x19,
+		0xfc,
+		0x08,
 		0x13,
 		0x3d,
 		0x42,
 		0x40,
+		0x00,
 		0xe8,
 		0x03,
 		0x32,
 		0x00,
 		0xe8,
 		0x03,
-		0x90,
-		0x01
+		0xfa,
+		0x00
 	};
 
 	if (cfg.hdr == 0)
