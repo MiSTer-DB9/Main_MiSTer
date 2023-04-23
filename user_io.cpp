@@ -115,7 +115,9 @@ unsigned char user_io_core_type()
 	return core_type;
 }
 
-char* user_io_create_config_name()
+static char config_ver[10] = {};
+
+char* user_io_create_config_name(int with_ver)
 {
 	static char str[40];
 	str[0] = 0;
@@ -123,6 +125,7 @@ char* user_io_create_config_name()
 	if (p[0])
 	{
 		strcpy(str, p);
+		if (with_ver) strcat(str, config_ver);
 		strcat(str, ".CFG");
 	}
 	return str;
@@ -226,6 +229,10 @@ char is_neogeo()
 {
 	if (!is_neogeo_type) is_neogeo_type = strcasecmp(orig_name, "neogeo") ? 2 : 1;
 	return (is_neogeo_type == 1);
+}
+
+char is_neogeo_cd() {
+    return is_neogeo() && neocd_is_en();
 }
 
 static int is_minimig_type = 0;
@@ -789,6 +796,15 @@ static void parse_config()
 				strcat(s, " ");
 				substrcpy(s + strlen(s), p, 1);
 				OsdCoreNameSet(s);
+			}
+
+			if (p[0] == 'v')
+			{
+				static char str[256];
+				substrcpy(str, p, 1);
+				str[2] = 0;
+				int v = strtoul(str, 0, 10);
+				if(v) snprintf(config_ver, sizeof(config_ver), "_v%d", v);
 			}
 
 			if (p[0] == 'C')
@@ -1363,7 +1379,7 @@ void user_io_init(const char *path, const char *xml)
 
 	case CORE_TYPE_8BIT:
 		// try to load config
-		name = user_io_create_config_name();
+		name = user_io_create_config_name(1);
 		if(strlen(name) > 0)
 		{
 			if (!is_st() && !is_minimig())
@@ -1383,6 +1399,7 @@ void user_io_init(const char *path, const char *xml)
 				user_io_status_set("[0]", 1);
 			}
 
+			name = user_io_create_config_name();
 			if (is_st())
 			{
 				tos_config_load(0);
@@ -2826,6 +2843,7 @@ void user_io_send_buttons(char force)
 		{
 			if (is_minimig()) minimig_reset();
 			if (is_megacd()) mcd_reset();
+			if (is_neogeo_cd()) neocd_reset();
 			if (is_pce()) pcecd_reset();
 			if (is_saturn()) saturn_reset();
 			if (is_x86() || is_pcxt()) x86_init();
@@ -3495,6 +3513,7 @@ void user_io_poll()
 	if (is_pce()) pcecd_poll();
 	if (is_saturn()) saturn_poll();
 	if (is_psx()) psx_poll();
+	if (is_neogeo_cd()) neocd_poll();
 	process_ss(0);
 }
 
