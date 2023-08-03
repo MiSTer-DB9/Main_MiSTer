@@ -95,6 +95,8 @@ enum MENU
 	MENU_ABOUT2,
 	MENU_RESET1,
 	MENU_RESET2,
+	MENU_UNLOCK1,
+	MENU_UNLOCK2,
 
 	MENU_JOYSYSMAP,
 	MENU_JOYDIGMAP,
@@ -205,6 +207,11 @@ static uint32_t menu_timer = 0;
 static uint32_t menu_save_timer = 0;
 static uint32_t load_addr = 0;
 static int32_t  bt_timer = 0;
+
+static bool osd_unlocked = 1;
+static char osd_code_entry[32];
+static uint32_t osd_lock_timer = 0;
+
 
 extern const char *version;
 
@@ -1167,11 +1174,11 @@ void HandleUI(void)
 			if (menustate != MENU_NONE2) menu = true;
 			break;
 		case KEY_BACK | UPSTROKE:
-			if (saved_menustate) back = true;
+			if (saved_menustate || !osd_unlocked) back = true;
 			else menu = true;
 			break;
 		case KEY_BACKSPACE | UPSTROKE:
-			if (saved_menustate) back = true;
+			if (saved_menustate || !osd_unlocked) back = true;
 			break;
 		case KEY_ENTER:
 		case KEY_SPACE:
@@ -1335,6 +1342,27 @@ void HandleUI(void)
 		break;
 	}
 
+	if (osd_lock_timer == 0) osd_lock_timer = GetTimer(cfg.osd_lock_time * 1000);
+
+	switch (menustate)
+	{
+	case MENU_NONE1:
+	case MENU_NONE2:
+	case MENU_INFO:
+		if (!cfg.osd_lock[0] || is_menu() || !mgl->done) osd_unlocked = 1;
+		else if (CheckTimer(osd_lock_timer)) osd_unlocked = 0;
+		break;
+
+	case MENU_UNLOCK1:
+	case MENU_UNLOCK2:
+		break;
+
+	default:
+		osd_unlocked = 1;
+		osd_lock_timer = GetTimer(cfg.osd_lock_time * 1000);
+		break;
+	}
+
 	// Switch to current menu screen
 	switch (menustate)
 	{
@@ -1355,7 +1383,11 @@ void HandleUI(void)
 		// fall through
 
 	case MENU_NONE2:
-		if (menu || (is_menu() && !video_fb_state()) || (menustate == MENU_NONE2 && !mgl->done && mgl->state == 1))
+		if (menu && !osd_unlocked)
+		{
+			menustate = MENU_UNLOCK1;
+		}
+		else if (menu || (is_menu() && !video_fb_state()) || (menustate == MENU_NONE2 && !mgl->done && mgl->state == 1))
 		{
 			OsdSetSize(16);
 			menusub = 0;
@@ -2187,11 +2219,14 @@ void HandleUI(void)
 						if (is_x86() || is_pcxt()) strcpy(Selected_tmp, x86_get_image_path(ioctl_index));
 						if (is_psx() && (ioctl_index == 2 || ioctl_index == 3)) fs_Options |= SCANO_SAVES;
 
-						if (is_pce() || is_megacd() || is_x86() || (is_psx() && !(fs_Options & SCANO_SAVES)))
+						if (is_pce() || is_megacd() || is_x86() || (is_psx() && !(fs_Options & SCANO_SAVES)) || is_neogeo())
 						{
 							//look for CHD too
-							strcat(fs_pFileExt, "CHD");
-							strcat(ext, "CHD");
+							if (!strcasestr(ext, "CHD"))
+							{
+								strcat(fs_pFileExt, "CHD");
+								strcat(ext, "CHD");
+							}
 
 							int num = ScanDirectory(Selected_tmp, SCANF_INIT, fs_pFileExt, 0);
 							memcpy(Selected_tmp, Selected_S[(int)ioctl_index], sizeof(Selected_tmp));
@@ -4052,6 +4087,65 @@ void HandleUI(void)
 		}
 		break;
 
+	case MENU_UNLOCK1:
+		osd_code_entry[0] = '\0';
+		menumask = 0;
+		helptext_idx = 0;
+		menustate = MENU_UNLOCK2;
+		parentstate = MENU_UNLOCK1;
+		OsdSetSize(16);
+		OsdEnable(DISABLE_KEYBOARD);
+		OsdSetTitle("Menu Locked", 0);
+		for (int r = 0; r < OsdGetSize(); r++) OsdWrite(r);
+		break;
+
+	case MENU_UNLOCK2:
+	{
+		const char *append = "";
+		if (up) append = "U";
+		else if (down) append = "D";
+		else if (left) append = "L";
+		else if (right) append = "R";
+		else if (select) append = "A";
+		else if (back) append = "B";
+		else if (menu) menustate = MENU_NONE1;
+
+		strcat(osd_code_entry, append);
+
+		if (strlen(osd_code_entry) >= strlen(cfg.osd_lock))
+		{
+			if (!strcmp(osd_code_entry, cfg.osd_lock))
+			{
+				osd_unlocked = 1;
+				osd_lock_timer = GetTimer(cfg.osd_lock_time * 1000);
+				menustate = MENU_NONE2;
+				menu_key_set(KEY_F12);
+			}
+			else
+			{
+				osd_code_entry[0] = '\0';
+			}
+		}
+
+		int maxlen = strlen(cfg.osd_lock);
+		int count = strlen(osd_code_entry);
+
+		m = 5;
+		OsdWrite(m++, "      Enter Unlock Code", 0, 0, 1);
+		OsdWrite(m++, "", 0, 0, 1);
+		OsdWrite(m++, "", 0, 0, 1);
+		int i;
+		for( i = 0; i < ( 29 - maxlen ) / 2; i++ )
+			s[i] = ' ';
+		for( int j = 0; j < maxlen; j++, i++ )
+		{
+			s[i] = j < count ? '*' : '-';
+		}
+
+		s[i] = '\0';
+		OsdWrite(m++, s, 0, 0, 1);
+		break;
+	}
 
 		/******************************************************************/
 		/* st main menu                                                 */
@@ -4969,7 +5063,7 @@ void HandleUI(void)
 				char type = flist_SelectedItem()->de.d_type;
 				memcpy(name, flist_SelectedItem()->de.d_name, sizeof(name));
 
-				if ((fs_Options & SCANO_UMOUNT) && (is_megacd() || is_pce() || (is_psx() && !(fs_Options & SCANO_SAVES)) || is_saturn()) && type == DT_DIR && strcmp(flist_SelectedItem()->de.d_name, ".."))
+				if ((fs_Options & SCANO_UMOUNT) && (is_megacd() || is_pce() || is_neogeo() || (is_psx() && !(fs_Options & SCANO_SAVES)) || is_saturn()) && type == DT_DIR && strcmp(flist_SelectedItem()->de.d_name, ".."))
 				{
 					int len = strlen(selPath);
 					strcat(selPath, "/");
