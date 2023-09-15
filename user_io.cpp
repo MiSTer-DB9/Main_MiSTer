@@ -325,6 +325,12 @@ char is_saturn()
 	return (is_saturn_type == 1);
 }
 
+static int is_n64_type = 0;
+char is_n64()
+{
+	if (!is_n64_type) is_n64_type = strcasecmp(orig_name, "N64") ? 2 : 1;
+	return (is_n64_type == 1);
+}
 
 static int is_no_type = 0;
 static int disable_osd = 0;
@@ -582,9 +588,14 @@ static char midi_speed_labels[13][32] = {};
 static const uint32_t mlink_speeds[13] = { 110, 300, 600, 1200, 2400, 4800, 9600, 14400, 19200, 31250, 38400, 57600, 115200 };
 static const char mlink_speed_labels[13][32] = { "110", "300", "600", "1200", "2400", "4800", "9600", "14400", "19200", "31250/MIDI", "38400", "57600", "115200" };
 static char defmra[1024] = {};
+static int boot0_loaded = 0;
+static int boot0_mounted = 0;
 
 static void parse_config()
 {
+	static char str[1024];
+	static char ext[256];
+
 	char mask[sizeof(cur_status) * 8] = {};
 	char overlap[sizeof(cur_status) * 8] = {};
 	int start, end, sz;
@@ -826,7 +837,6 @@ static void parse_config()
 				if (p[idx] == 'C')
 				{
 					idx++;
-				static char str[1024];
 				uint32_t load_addr = 0;
 				if (substrcpy(str, p, 3))
 				{
@@ -839,22 +849,29 @@ static void parse_config()
 				}
 
 					sprintf(str, "%s.f%c", user_io_get_core_name(), p[idx]);
+					substrcpy(ext, p, 1);
+					while (strlen(ext) % 3) strcat(ext, " ");
+
 				if (FileLoadConfig(str, str, sizeof(str)) && str[0])
 				{
-
 						idx = p[idx] - '0';
 					StoreIdx_F(idx, str);
-						user_io_file_tx(str, idx, opensave, 0, 0, load_addr);
+						user_io_file_tx(str, (user_io_ext_idx(str, ext) << 6) | idx, opensave, 0, 0, load_addr);
+						if (!idx) boot0_loaded = 1;
+
+						if (is_cpc())
+						{
+							char *p = strrchr(str, '.');
+							if (p && (!strcasecmp(p, ".eZZ") || !strcasecmp(p, ".eZ0"))) boot0_loaded = 1;
+						}
 					}
 				}
 			}
 
 			if (p[0] == 'S' && p[1] == 'C')
 			{
-				static char str[1024];
 				sprintf(str, "%s.s%c", user_io_get_core_name(), p[2]);
 
-				static char ext[256];
 				substrcpy(ext, p, 1);
 				while (strlen(ext) % 3) strcat(ext, " ");
 
@@ -877,10 +894,11 @@ static void parse_config()
 					}
 					else
 					{
-						if (!is_c128())
-						user_io_set_index(user_io_ext_idx(str, ext) << 6 | idx);
+						if (!is_c128()) user_io_set_index((user_io_ext_idx(str, ext) << 6) | idx);
 						user_io_file_mount(str, idx);
 					}
+
+					if (!idx) boot0_mounted = 1;
 				}
 			}
 		}
@@ -893,7 +911,6 @@ static void parse_config()
 	printf("// 0         1         2         3          4         5         6   \n");
 	printf("// 01234567890123456789012345678901 23456789012345678901234567890123\n");
 	printf("// 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV\n");
-	char str[128];
 	strcpy(str, "// ");
 	for (int i = 0; i < 32; i++) strcat(str, mask[i] ? "X" : " ");
 	strcat(str, " ");
@@ -1449,7 +1466,7 @@ void user_io_init(const char *path, const char *xml)
 						if (!is_cpc())
 						{
 							// check for multipart rom
-							for (char i = 0; i < 4; i++)
+							for (char i = (boot0_loaded ? 1 : 0); i < 4; i++)
 							{
 								sprintf(mainpath, "%s/boot%d.rom", home, i);
 								user_io_file_tx(mainpath, i << 6);
@@ -1457,6 +1474,8 @@ void user_io_init(const char *path, const char *xml)
 						}
 
 						// legacy style of rom
+						if (!boot0_loaded)
+						{
 						sprintf(mainpath, "%s/boot.rom", home);
 						if (!user_io_file_tx(mainpath))
 						{
@@ -1470,6 +1489,7 @@ void user_io_init(const char *path, const char *xml)
 									user_io_file_tx(mainpath);
 								}
 							}
+						}
 						}
 
 						// cheats for boot file
@@ -1494,7 +1514,7 @@ void user_io_init(const char *path, const char *xml)
 					}
 
 					// check if vhd present
-					for (char i = 0; i < 4; i++)
+					for (char i = (boot0_mounted ? 1 : 0); i < 4; i++)
 					{
 						sprintf(mainpath, "%s/boot%d.vhd", home, i);
 						if (FileExists(mainpath))
@@ -1504,6 +1524,8 @@ void user_io_init(const char *path, const char *xml)
 						}
 					}
 
+					if (!boot0_mounted)
+					{
 					sprintf(mainpath, "%s/boot.vhd", home);
 					if (FileExists(mainpath))
 					{
@@ -1526,6 +1548,7 @@ void user_io_init(const char *path, const char *xml)
 						}
 					}
 				}
+			}
 			}
 
 			parse_buttons();

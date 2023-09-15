@@ -1119,6 +1119,7 @@ enum QUIRK
 	QUIRK_PDSP,
 	QUIRK_PDSP_ARCADE,
 	QUIRK_JAMMA,
+	QUIRK_JAMMA2,
 	QUIRK_MSSP,
 	QUIRK_TOUCHGUN,
 	QUIRK_VCS,
@@ -1148,6 +1149,7 @@ typedef struct
 
 	uint8_t  has_mmap;
 	uint32_t mmap[NUMBUTTONS];
+	uint8_t  has_jkmap;
 	uint16_t jkmap[1024];
 	int      stick_l[2];
 	int      stick_r[2];
@@ -1386,7 +1388,11 @@ static int mapping_dev = -1;
 static int mapping_type;
 static int mapping_count;
 static int mapping_clear;
+static int mapping_finish;
 static int mapping_set;
+
+static int mapping_current_key = 0;
+static int mapping_current_dev = -1;
 
 static uint32_t tmp_axis[4];
 static int tmp_axis_n = 0;
@@ -1395,6 +1401,9 @@ static int grabbed = 1;
 
 void start_map_setting(int cnt, int set)
 {
+	mapping_current_key = 0;
+	mapping_current_dev = -1;
+
 	mapping_button = 0;
 	mapping = 1;
 	mapping_set = set;
@@ -1405,6 +1414,7 @@ void start_map_setting(int cnt, int set)
 	}
 	mapping_count = cnt;
 	mapping_clear = 0;
+	mapping_finish = 0;
 	tmp_axis_n = 0;
 
 	if (mapping_type <= 1 && is_menu()) mapping_button = -6;
@@ -1432,6 +1442,11 @@ int get_map_type()
 int get_map_clear()
 {
 	return mapping_clear;
+}
+
+int get_map_finish()
+{
+	return mapping_finish;
 }
 
 static uint32_t osd_timer = 0;
@@ -1469,6 +1484,14 @@ static char *get_map_name(int dev, int def)
 	return name;
 }
 
+static char *get_jkmap_name(int dev)
+{
+	static char name[1024];
+	char *id = get_unique_mapping(dev);
+	sprintfz(name, "%s_input_%s_jk.map", user_io_get_core_name(), id);
+	return name;
+}
+
 static char *get_kbdmap_name(int dev)
 {
 	static char name[128];
@@ -1485,13 +1508,14 @@ void finish_map_setting(int dismiss)
 
 	if (mapping_type == 2)
 	{
-		if (dismiss) input[mapping_dev].has_kbdmap = 0;
-		else if (dismiss == 2) FileDeleteConfig(get_kbdmap_name(mapping_dev));
+		input[mapping_dev].has_kbdmap = 0;
+		if (dismiss) FileDeleteConfig(get_kbdmap_name(mapping_dev));
 		else FileSaveConfig(get_kbdmap_name(mapping_dev), &input[mapping_dev].kbdmap, sizeof(input[mapping_dev].kbdmap));
 	}
 	else if (mapping_type == 3)
 	{
 		if (dismiss) memset(input[mapping_dev].jkmap, 0, sizeof(input[mapping_dev].jkmap));
+		save_map(get_jkmap_name(mapping_dev), &input[mapping_dev].jkmap, sizeof(input[mapping_dev].jkmap));
 	}
 	else
 	{
@@ -2313,13 +2337,25 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 		}
 	}
 
+	if (ev->type == EV_KEY && ev->code < 256 && !(mapping && mapping_type == 2))
+	{
+		if (!input[dev].has_kbdmap)
+		{
+			if (!FileLoadConfig(get_kbdmap_name(dev), &input[dev].kbdmap, sizeof(input[dev].kbdmap)))
+			{
+				memset(input[dev].kbdmap, 0, sizeof(input[dev].kbdmap));
+			}
+			input[dev].has_kbdmap = 1;
+		}
+
+		if (input[dev].kbdmap[ev->code]) ev->code = input[dev].kbdmap[ev->code];
+	}
+
 	static int key_mapped = 0;
 
-	if (ev->type == EV_KEY && mapping && mapping_type == 3 && ev->code == input[dev].mmap[SYS_BTN_OSD_KTGL + 1]) ev->code = KEY_ENTER;
-
-	int map_skip = (ev->type == EV_KEY && ((ev->code == KEY_SPACE && mapping_type == 1) || ev->code == KEY_ALTERASE) && (mapping_dev >= 0 || mapping_button<0));
-	int cancel   = (ev->type == EV_KEY && ev->code == KEY_ESC);
-	int enter    = (ev->type == EV_KEY && ev->code == KEY_ENTER);
+	int map_skip = (ev->type == EV_KEY && mapping && ((ev->code == KEY_SPACE && mapping_type == 1) || ev->code == KEY_ALTERASE) && (mapping_dev >= 0 || mapping_button<0));
+	int cancel   = (ev->type == EV_KEY && ev->code == KEY_ESC && !(mapping && mapping_type == 3 && mapping_button));
+	int enter    = (ev->type == EV_KEY && ev->code == KEY_ENTER && !(mapping && mapping_type == 3 && mapping_button));
 	int origcode = ev->code;
 
 	if (!input[dev].has_mmap)
@@ -2410,6 +2446,15 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 			input[dev].has_map++;
 		}
 		input[dev].has_map++;
+	}
+
+	if (!input[dev].has_jkmap)
+	{
+		if (!load_map(get_jkmap_name(dev), &input[dev].jkmap, sizeof(input[dev].jkmap)))
+		{
+			memset(input[dev].jkmap, 0, sizeof(input[dev].jkmap));
+		}
+		input[dev].has_jkmap = 1;
 	}
 
 	if (!input[dev].num)
@@ -2543,6 +2588,16 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 		osd_timer = 0;
 	}
 
+	if (mapping && mapping_type == 3)
+	{
+		if (map_skip)
+		{
+			mapping_finish = 1;
+			ev->value = 0;
+		}
+		osd_event = 0;
+	}
+
 	//mapping
 	if (mapping && (mapping_dev >= 0 || ev->value)
 		&& !((mapping_type < 2 || !mapping_button) && (cancel || enter))
@@ -2561,45 +2616,85 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 		// paddle axis - skip from mapping
 		if ((ev->type == EV_ABS || ev->type == EV_REL) && (ev->code == 7 || ev->code == 8) && input[dev].quirk != QUIRK_WHEEL) return;
 
+		// protection against joysticks generating 2 codes per button
+		if (ev->type == EV_KEY && !(is_menu() && mapping < 2 && mapping_button == SYS_BTN_OSD_KTGL) && !map_skip)
+		{
+			if (!mapping_current_key)
+			{
+				if (ev->value == 1)
+				{
+					mapping_current_key = ev->code;
+					mapping_current_dev = dev;
+				}
+				else return;
+			}
+			else
+			{
+				if (ev->value == 0 && mapping_current_key == ev->code && mapping_current_dev == dev)
+				{
+					mapping_current_key = 0;
+				}
+				else return;
+			}
+		}
+
+		if (map_skip) mapping_current_key = 0;
+
 		if (ev->type == EV_KEY && mapping_button>=0 && !osd_event)
 		{
-			if (mapping_type == 2)
+			if (mapping_type == 2) // keyboard remap
 			{
 				if (ev->code < 256)
 				{
-					if (ev->value == 1)
+					if (!mapping_button)
 					{
-						if (mapping_dev < 0)
+						if (ev->value == 1)
 						{
-							mapping_dev = dev;
+							if (mapping_dev < 0)
+							{
+								mapping_dev = dev;
+								mapping_button = 0;
+							}
+
+							if (!mapping_button) mapping_button = ev->code;
+							mapping_current_dev = mapping_dev;
+						}
+					}
+					else
+					{
+						if (ev->value == 0 && mapping_dev >= 0 && mapping_button != ev->code)
+						{
+							input[mapping_dev].kbdmap[mapping_button] = ev->code;
 							mapping_button = 0;
 						}
-
-						if (!mapping_button) mapping_button = ev->code;
-					}
-
-					if (ev->value == 0 && mapping_dev >= 0 && mapping_button && mapping_button != ev->code)
-					{
-						input[mapping_dev].kbdmap[mapping_button] = ev->code;
-						mapping_button = 0;
 					}
 				}
 				return;
 			}
-			else if (mapping_type == 3)
+			else if (mapping_type == 3) // button remap
 			{
+				if (input[dev].mmap[SYS_BTN_OSD_KTGL] == ev->code ||
+					input[dev].mmap[SYS_BTN_OSD_KTGL + 1] == ev->code ||
+					input[dev].mmap[SYS_BTN_OSD_KTGL + 2] == ev->code) return;
+
 				if (ev->value == 1 && !mapping_button)
 				{
 					if (mapping_dev < 0) mapping_dev = dev;
 					if (mapping_dev == dev && ev->code < 1024) mapping_button = ev->code;
+					mapping_current_dev = mapping_dev;
 				}
 
-				if (ev->value == 0 && mapping_dev >= 0 && (ev->code<256 || mapping_dev == dev) && mapping_button && mapping_button != ev->code)
+				if (mapping_dev >= 0 && (ev->code < 256 || mapping_dev == dev) && mapping_button && mapping_button != ev->code)
 				{
-					// Technically it's hard to map the key to button as keyboards
-					// are all the same while joysticks are personalized and numbered.
-					input[mapping_dev].jkmap[mapping_button] = ev->code;
-					mapping_button = 0;
+					if (ev->value == 1)
+					{
+						// Technically it's hard to map the key to button as keyboards
+						// are all the same while joysticks are personalized and numbered.
+						input[mapping_dev].jkmap[mapping_button] = ev->code;
+						mapping_current_dev = dev;
+					}
+
+					if (ev->value == 0) mapping_button = 0;
 				}
 				return;
 			}
@@ -2640,6 +2735,7 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 									{
 										input[dev].map[SYS_BTN_OSD_KTGL + mapping_type] = ev->code;
 										input[dev].map[SYS_BTN_OSD_KTGL + 2] = input[dev].map[SYS_BTN_OSD_KTGL + 1];
+										mapping_current_key = 0; // allow 2 buttons to be pressed
 									}
 									else input[dev].map[mapping_button] = ev->code;
 
@@ -3043,32 +3139,20 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 			// keyboard
 			else
 			{
-				if (!input[dev].has_kbdmap)
-				{
-					if (!FileLoadConfig(get_kbdmap_name(dev), &input[dev].kbdmap, sizeof(input[dev].kbdmap)))
-					{
-						memset(input[dev].kbdmap, 0, sizeof(input[dev].kbdmap));
-					}
-					input[dev].has_kbdmap = 1;
-				}
-
-				uint16_t code = ev->code;
-				if (code < 256 && input[dev].kbdmap[code]) code = input[dev].kbdmap[code];
-
 				//  replace MENU key by RGUI to allow using Right Amiga on reduced keyboards
 				// (it also disables the use of Menu for OSD)
-				if (cfg.key_menu_as_rgui && code == KEY_COMPOSE) code = KEY_RIGHTMETA;
+				if (cfg.key_menu_as_rgui && ev->code == KEY_COMPOSE) ev->code = KEY_RIGHTMETA;
 
 				//Keyrah v2: USB\VID_18D8&PID_0002\A600/A1200_MULTIMEDIA_EXTENSION_VERSION
 				int keyrah = (cfg.keyrah_mode && (((((uint32_t)input[dev].vid) << 16) | input[dev].pid) == cfg.keyrah_mode));
-				if (keyrah) code = keyrah_trans(code, ev->value);
+				if (keyrah) ev->code = keyrah_trans(ev->code, ev->value);
 
-				uint32_t ps2code = get_ps2_code(code);
+				uint32_t ps2code = get_ps2_code(ev->code);
 				if (ev->value) modifier |= ps2code;
 				else modifier &= ~ps2code;
 
 				uint16_t reset_m = (modifier & MODMASK) >> 8;
-				if (code == 111) reset_m |= 0x100;
+				if (ev->code == 111) reset_m |= 0x100;
 				user_io_check_reset(reset_m, (keyrah && !cfg.reset_combo) ? 1 : cfg.reset_combo);
 
 				if(!user_io_osd_is_visible() && ((user_io_get_kbdemu() == EMU_JOY0) || (user_io_get_kbdemu() == EMU_JOY1)) && !video_fb_state())
@@ -3154,8 +3238,8 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 					}
 				}
 
-				if (code == KEY_HOMEPAGE) code = KEY_MENU;
-				user_io_kbd(code, ev->value);
+				if (ev->code == KEY_HOMEPAGE) ev->code = KEY_MENU;
+				user_io_kbd(ev->code, ev->value);
 				return;
 			}
 			break;
@@ -3451,6 +3535,7 @@ void mergedevs()
 	make_unique(0x045E, 0x02A1, 1);  // Xbox 360 wireless receiver
 	make_unique(0x8282, 0x3201, 1);  // Irken Labs JAMMA Expander / Mojo Retro Adapter
 	make_unique(0x1209, 0xFACA, 1);  // ControllaBLE
+	make_unique(0x16D0, 0x127E, 1);  // Reflex Adapt to USB
 
 	if (cfg.no_merge_vid)
 	{
@@ -3595,6 +3680,47 @@ static struct
 	{KEY_M,         4, 0x129}, // 4P 4
 */
 };
+
+// Second Jammasd/J-PAC/I-PAC quirk. It's equivalent to jamma2joy but assigned to players 3 and 4
+// to give support to JAMMA-VERSUS with two JAMMA USB control interfaces.
+// i.e. JammaSD for Players1-2 (on a first cabinet), and J-PAC for Payers 3-4 (on a second cabinet)
+static struct
+{
+    uint16_t key;
+    uint16_t player;
+    uint16_t btn;
+} jamma22joy[] =
+        {
+                {KEY_5,         3, 0x120}, // 3P coin
+                {KEY_1,         3, 0x121}, // 3P start
+                {KEY_UP,        3, 0x122}, // 3P up
+                {KEY_DOWN,      3, 0x123}, // 3P down
+                {KEY_LEFT,      3, 0x124}, // 3P left
+                {KEY_RIGHT,     3, 0x125}, // 3P right
+                {KEY_LEFTCTRL,  3, 0x126}, // 3P 1
+                {KEY_LEFTALT,   3, 0x127}, // 3P 2
+                {KEY_SPACE,     3, 0x128}, // 3P 3
+                {KEY_LEFTSHIFT, 3, 0x129}, // 3P 4
+                {KEY_Z,         3, 0x12A}, // 3P 5
+                {KEY_X,         3, 0x12B}, // 3P 6
+                {KEY_C,         3, 0x12C}, // 3P 7
+                {KEY_V,         3, 0x12D}, // 3P 8
+
+                {KEY_6,         4, 0x120}, // 4P coin
+                {KEY_2,         4, 0x121}, // 4P start
+                {KEY_R,         4, 0x122}, // 4P up
+                {KEY_F,         4, 0x123}, // 4P down
+                {KEY_D,         4, 0x124}, // 4P left
+                {KEY_G,         4, 0x125}, // 4P right
+                {KEY_A,         4, 0x126}, // 4P 1
+                {KEY_S,         4, 0x127}, // 4P 2
+                {KEY_Q,         4, 0x128}, // 4P 3
+                {KEY_W,         4, 0x129}, // 4P 4
+                {KEY_I,         4, 0x12A}, // 4P 5
+                {KEY_K,         4, 0x12B}, // 4P 6
+                {KEY_J,         4, 0x12C}, // 4P 7
+                {KEY_L,         4, 0x12D}, // 4P 8
+        };
 
 static void send_mouse_with_throttle(int dev, int xval, int yval, int8_t wval)
 {
@@ -4272,8 +4398,9 @@ static void setup_wheels()
 				}
 			}
 
-			// Namco NeGcon via RetroZord adapter
-			else if (input[i].vid == 0x2341 && input[i].pid == 0x8036 && strstr(input[i].name, "RZordPsWheel"))
+			//Namco NeGcon via RetroZord adapter or Reflex Adapt
+			else if ((input[i].vid == 0x2341 && input[i].pid == 0x8036 && strstr(input[i].name, "RZordPsWheel")) ||
+					 (input[i].vid == 0x16D0 && input[i].pid == 0x127E && strstr(input[i].name, "ReflexPSWheel")))
 			{
 				input[i].wh_accel = 6;
 				input[i].wh_brake = 10;
@@ -4509,8 +4636,9 @@ int input_test(int getchar)
 							input[n].lightgun = 1;
 						}
 
-						//Namco Guncon via RetroZord adapter
-						if (input[n].vid == 0x2341 && input[n].pid == 0x8036 && (strstr(uniq, "RZordPsGun") || strstr(input[n].name, "RZordPsGun")))
+						//Namco Guncon via RetroZord adapter or Reflex Adapt
+						if ((input[n].vid == 0x2341 && input[n].pid == 0x8036 && (strstr(uniq, "RZordPsGun") || strstr(input[n].name, "RZordPsGun"))) ||
+							(input[n].vid == 0x16D0 && input[n].pid == 0x127E && (strstr(uniq, "ReflexPSGun") || strstr(input[n].name, "ReflexPSGun"))))
 						{
 							input[n].quirk = QUIRK_LIGHTGUN;
 							input[n].lightgun = 1;
@@ -4581,6 +4709,12 @@ int input_test(int getchar)
 							input[n].quirk = QUIRK_JAMMA;
 						}
 
+						//Jamma2
+						if (cfg.jamma2_vid && cfg.jamma2_pid && input[n].vid == cfg.jamma2_vid && input[n].pid == cfg.jamma2_pid)
+						{
+							input[n].quirk = QUIRK_JAMMA2;
+						}
+
 						//Atari VCS wireless joystick with spinner
 						if (input[n].vid == 0x3250 && input[n].pid == 0x1001)
 						{
@@ -4590,7 +4724,8 @@ int input_test(int getchar)
 						}
 
 						//Arduino and Teensy devices may share the same VID:PID, so additional field UNIQ is used to differentiate them
-						if ((input[n].vid == 0x2341 || (input[n].vid == 0x16C0 && (input[n].pid>>8) == 0x4)) && strlen(uniq))
+						//Reflex Adapt also uses the UNIQ field to differentiate between device modes
+						if ((input[n].vid == 0x2341 || (input[n].vid == 0x16C0 && (input[n].pid>>8) == 0x4) || (input[n].vid == 0x16D0 && input[n].pid == 0x127E)) && strlen(uniq))
 						{
 							snprintf(input[n].idstr, sizeof(input[n].idstr), "%04x_%04x_%s", input[n].vid, input[n].pid, uniq);
 							char *p;
@@ -4883,6 +5018,20 @@ int input_test(int getchar)
 										{
 											ev.code = jamma2joy[i].btn;
 											input[dev].num = jamma2joy[i].player;
+											break;
+										}
+									}
+                                }
+
+								if (input[dev].quirk == QUIRK_JAMMA2 && ev.type == EV_KEY)
+								{
+									input[dev].num = 0;
+									for (uint32_t i = 0; i < sizeof(jamma22joy) / sizeof(jamma22joy[0]); i++)
+									{
+										if (jamma22joy[i].key == ev.code)
+										{
+											ev.code = jamma22joy[i].btn;
+											input[dev].num = jamma22joy[i].player;
 											break;
 										}
 									}
