@@ -16,6 +16,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <stdarg.h>
+#include <math.h>
 
 #include "input.h"
 #include "user_io.h"
@@ -1198,6 +1199,9 @@ typedef struct
 	char     id[80];
 	char     name[128];
 	char     sysfs[512];
+	int      ss_range[2];
+	int 	 max_cardinal[2];
+	float    max_range[2];
 } devInput;
 
 static devInput input[NUMDEV] = {};
@@ -2074,16 +2078,42 @@ static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int 
 	}
 }
 
-static void joy_analog(int num, int axis, int offset, int stick = 0)
+static void joy_analog(int dev, int axis, int offset, int stick = 0)
 {
+	int num = input[dev].num;
 	static int pos[2][NUMPLAYERS][2] = {};
 
 	if (grabbed && num > 0 && num < NUMPLAYERS+1)
 	{
 		num--;
 		pos[stick][num][axis] = offset;
-		if(stick) user_io_r_analog_joystick(num, (char)(pos[1][num][0]), (char)(pos[1][num][1]));
-		else user_io_l_analog_joystick(num, (char)(pos[0][num][0]), (char)(pos[0][num][1]));
+		int x = pos[stick][num][0];
+		int y = pos[stick][num][1];
+		if (is_n64())
+		{
+			// Update maximum observed cardinal distance
+			const int abs_x = abs(x);
+			const int abs_y = abs(y);
+
+			if (abs_x > input[dev].max_cardinal[stick]) input[dev].max_cardinal[stick] = abs_x;
+			if (abs_y > input[dev].max_cardinal[stick]) input[dev].max_cardinal[stick] = abs_y;
+
+			// Update maximum observed diag
+			// Use sum of squares and only calc sqrt() when necessary
+			const int ss_range_curr = x*x + y*y;
+			// compare to max ss_range and update if larger
+			if ((ss_range_curr > input[dev].ss_range[stick]) & (abs(abs_x - abs_y) <= 3))
+			{
+				input[dev].ss_range[stick] = ss_range_curr;
+				input[dev].max_range[stick] = sqrt(ss_range_curr);
+			}
+
+			// emulate n64 joystick range and shape for regular -127-+127 controllers
+			n64_joy_emu(x, y, &x, &y, input[dev].max_cardinal[stick], input[dev].max_range[stick]);
+			stick_swap(num,stick,&num,&stick);
+		}
+		if(stick) user_io_r_analog_joystick(num, (char)x, (char)y);
+		else user_io_l_analog_joystick(num, (char)x, (char)y);
 	}
 }
 
@@ -3323,58 +3353,58 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 						// steering wheel passes full range, pedals are standardised in +127 to 0 to -127 range
 						if (ev->code == input[dev].wh_steer)
 						{
-							joy_analog(input[dev].num, 0, value, 0);
+							joy_analog(dev, 0, value, 0);
 						}
 						else if (ev->code == input[dev].wh_accel)
 						{
-							joy_analog(input[dev].num, 1, wh_value, 0);
+							joy_analog(dev, 1, wh_value, 0);
 						}
 						else if (ev->code == input[dev].wh_brake)
 						{
-							joy_analog(input[dev].num, 1, wh_value, 1);
+							joy_analog(dev, 1, wh_value, 1);
 						}
 						else if (ev->code == input[dev].wh_clutch)
 						{
-							joy_analog(input[dev].num, 0, wh_value, 1);
+							joy_analog(dev, 0, wh_value, 1);
 						}
 						else if (ev->code == input[dev].wh_combo)
 						{
 							// if accel and brake pedal use a shared axis then map negative to accel and positive to brake
-							if (value < -1) joy_analog(input[dev].num, 1, value, 0);
-							else if (value > 1) joy_analog(input[dev].num, 1, -value, 1);
+							if (value < -1) joy_analog(dev, 1, value, 0);
+							else if (value > 1) joy_analog(dev, 1, -value, 1);
 							else
 							{
-								joy_analog(input[dev].num, 1, 0, 0);
-								joy_analog(input[dev].num, 1, 0, 0);
+								joy_analog(dev, 1, 0, 0);
+								joy_analog(dev, 1, 0, 0);
 							}
 						}
 					}
 					else if (ev->code == 0 && input[dev].lightgun)
 					{
-						joy_analog(input[dev].num, 0, value);
+						joy_analog(dev, 0, value);
 					}
 					else if (ev->code == 1 && input[dev].lightgun)
 					{
-						joy_analog(input[dev].num, 1, value);
+						joy_analog(dev, 1, value);
 					}
 					else
 					{
 						int offset = (value < -1 || value>1) ? value : 0;
 						if (input[dev].stick_l[0] && ev->code == (uint16_t)input[dev].mmap[input[dev].stick_l[0]])
 						{
-							joy_analog(input[dev].num, 0, offset, 0);
+							joy_analog(dev, 0, offset, 0);
 						}
 						else if (input[dev].stick_l[1] && ev->code == (uint16_t)input[dev].mmap[input[dev].stick_l[1]])
 						{
-							joy_analog(input[dev].num, 1, offset, 0);
+							joy_analog(dev, 1, offset, 0);
 						}
 						else if (input[dev].stick_r[0] && ev->code == (uint16_t)input[dev].mmap[input[dev].stick_r[0]])
 						{
-							joy_analog(input[dev].num, 0, offset, 1);
+							joy_analog(dev, 0, offset, 1);
 						}
 						else if (input[dev].stick_r[1] && ev->code == (uint16_t)input[dev].mmap[input[dev].stick_r[1]])
 						{
-							joy_analog(input[dev].num, 1, offset, 1);
+							joy_analog(dev, 1, offset, 1);
 						}
 					}
 				}
