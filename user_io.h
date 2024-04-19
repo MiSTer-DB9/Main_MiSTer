@@ -150,6 +150,7 @@
 #define CONF_DIRECT_VIDEO       0b0000010000000000
 #define CONF_HDMI_LIMITED2      0b0000100000000000
 #define CONF_VGA_FB             0b0001000000000000
+#define CONF_DIRECT_VIDEO2      0b0010000000000000
 
 // core type value should be unlikely to be returned by broken cores
 #define CORE_TYPE_UNKNOWN   0x55
@@ -189,11 +190,13 @@ int  user_io_file_mount(const char *name, unsigned char index = 0, char pre = 0,
 void user_io_bufferinvalidate(unsigned char index);
 char *user_io_make_filepath(const char *path, const char *filename);
 char *user_io_get_core_name(int orig = 0);
+char *user_io_get_core_name2();
 char *user_io_get_core_path(const char *suffix = NULL, int recheck = 0);
-void user_io_name_override(const char* name);
+void user_io_name_override(const char* name, int samedir);
 char has_menu();
 
 const char *get_image_name(int i);
+fileTYPE *get_image(int i);
 
 int user_io_get_kbdemu();
 uint32_t user_io_get_uart_mode();
@@ -282,8 +285,10 @@ char is_arcade();
 char is_saturn();
 char is_pcxt();
 char is_n64();
+char is_uneon();
 
 #define HomeDir(x) user_io_get_core_path(x)
 #define CoreName user_io_get_core_name()
+#define CoreName2 user_io_get_core_name2()
 
 #endif // USER_IO_H
