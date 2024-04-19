@@ -185,45 +185,44 @@ static int isPathDirectory(const char *path, int use_zip = 1)
 	char *zip_path, *file_path;
 	if (use_zip && FileIsZipped(full_path, &zip_path, &file_path))
 	{
+		if (!*file_path)
+		{
+			return 1;
+		}
 
-      if (!*file_path)
-      {
-        return 1;
-      }
-
-      if (!OpenZipfileCached(full_path, 0))
-		  {
-			  printf("isPathDirectory(OpenZipfileCached) Zip:%s, error:%s\n", zip_path,
-			        mz_zip_get_error_string(mz_zip_get_last_error(&last_zip_archive)));
-			  return 0;
-		  }
+		if (!OpenZipfileCached(full_path, 0))
+		{
+			printf("isPathDirectory(OpenZipfileCached) Zip:%s, error:%s\n", zip_path,
+				mz_zip_get_error_string(mz_zip_get_last_error(&last_zip_archive)));
+			return 0;
+		}
 
 		// Folder names always end with a slash in the zip
 		// file central directory.
 		strcat(file_path, "/");
 
+		// Some zip files don't have directory entries
+		// Use the locate_file call to try and find the directory entry first, since
+		// this is a binary search (usually) If that fails then scan for the first
+		// entry that starts with file_path
 
-    // Some zip files don't have directory entries
-    // Use the locate_file call to try and find the directory entry first, since
-    // this is a binary search (usually) If that fails then scan for the first
-    // entry that starts with file_path
+		const int file_index = mz_zip_reader_locate_file(&last_zip_archive, file_path, NULL, 0);
+		if (file_index >= 0 && mz_zip_reader_is_file_a_directory(&last_zip_archive, file_index))
+		{
+			return 1;
+		}
 
-    const int file_index = mz_zip_reader_locate_file(&last_zip_archive, file_path, NULL, 0);
-    if (file_index >= 0 && mz_zip_reader_is_file_a_directory(&last_zip_archive, file_index))
-    {
-      return 1;
-    }
-
-    for (size_t i = 0; i < mz_zip_reader_get_num_files(&last_zip_archive); i++) {
-      char zip_fname[256];
-      mz_zip_reader_get_filename(&last_zip_archive, i, &zip_fname[0], sizeof(zip_fname));
-      if (strcasestr(zip_fname, file_path))
-      {
-        return 1;
-      }
-    }
-    return 0;
-  }
+		for (size_t i = 0; i < mz_zip_reader_get_num_files(&last_zip_archive); i++)
+		{
+			char zip_fname[256];
+			mz_zip_reader_get_filename(&last_zip_archive, i, &zip_fname[0], sizeof(zip_fname));
+			if (strcasestr(zip_fname, file_path))
+			{
+				return 1;
+			}
+		}
+		return 0;
+	}
 	else
 	{
 		int stmode = get_stmode(full_path);
@@ -246,17 +245,17 @@ static int isPathRegularFile(const char *path, int use_zip = 1)
 	char *zip_path, *file_path;
 	if (use_zip && FileIsZipped(full_path, &zip_path, &file_path))
 	{
-    //If there's no path into the zip file, don't bother opening it, we're a "directory"
-    if (!*file_path)
-    {
-      return 0;
-    }
-		  if (!OpenZipfileCached(full_path, 0))
-		  {
-			  //printf("isPathRegularFile(mz_zip_reader_init_file) Zip:%s, error:%s\n", zip_path,
-			  //       mz_zip_get_error_string(mz_zip_get_last_error(&z)));
-			  return 0;
-		  }
+		//If there's no path into the zip file, don't bother opening it, we're a "directory"
+		if (!*file_path)
+		{
+			return 0;
+		}
+		if (!OpenZipfileCached(full_path, 0))
+		{
+			//printf("isPathRegularFile(mz_zip_reader_init_file) Zip:%s, error:%s\n", zip_path,
+			//       mz_zip_get_error_string(mz_zip_get_last_error(&z)));
+			return 0;
+		}
 		const int file_index = mz_zip_reader_locate_file(&last_zip_archive, file_path, NULL, 0);
 		if (file_index < 0)
 		{
@@ -815,7 +814,7 @@ int FileCanWrite(const char *name)
 	return ((st.st_mode & S_IWUSR) != 0);
 }
 
-static void create_path(const char *base_dir, const char* sub_dir)
+void create_path(const char *base_dir, const char* sub_dir)
 {
 	make_fullpath(base_dir);
 	mkdir(full_path, S_IRWXU | S_IRWXG | S_IRWXO);
@@ -852,7 +851,7 @@ void FileGenerateScreenshotName(const char *name, char *out_name, int buflen)
 	}
 	else
 	{
-		create_path(SCREENSHOT_DIR, CoreName);
+		create_path(SCREENSHOT_DIR, CoreName2);
 
 		time_t t = time(NULL);
 		struct tm tm = *localtime(&t);
@@ -860,13 +859,13 @@ void FileGenerateScreenshotName(const char *name, char *out_name, int buflen)
 		if (tm.tm_year >= 119) // 2019 or up considered valid time
 		{
 			strftime(datecode, 31, "%Y%m%d_%H%M%S", &tm);
-			snprintf(out_name, buflen, "%s/%s/%s-%s.png", SCREENSHOT_DIR, CoreName, datecode, name[0] ? name : SCREENSHOT_DEFAULT);
+			snprintf(out_name, buflen, "%s/%s/%s-%s.png", SCREENSHOT_DIR, CoreName2, datecode, name[0] ? name : SCREENSHOT_DEFAULT);
 		}
 		else
 		{
 			for (int i = 1; i < 10000; i++)
 			{
-				snprintf(out_name, buflen, "%s/%s/NODATE-%s_%04d.png", SCREENSHOT_DIR, CoreName, name[0] ? name : SCREENSHOT_DEFAULT, i);
+				snprintf(out_name, buflen, "%s/%s/NODATE-%s_%04d.png", SCREENSHOT_DIR, CoreName2, name[0] ? name : SCREENSHOT_DEFAULT, i);
 				if (!getFileType(out_name)) return;
 			}
 		}
@@ -875,9 +874,9 @@ void FileGenerateScreenshotName(const char *name, char *out_name, int buflen)
 
 void FileGenerateSavePath(const char *name, char* out_name, int ext_replace)
 {
-	create_path(SAVE_DIR, CoreName);
+	create_path(SAVE_DIR, CoreName2);
 
-	sprintf(out_name, "%s/%s/", SAVE_DIR, CoreName);
+	sprintf(out_name, "%s/%s/", SAVE_DIR, CoreName2);
 	char *fname = out_name + strlen(out_name);
 
 	const char *p = strrchr(name, '/');
@@ -905,9 +904,9 @@ void FileGenerateSavePath(const char *name, char* out_name, int ext_replace)
 
 void FileGenerateSavestatePath(const char *name, char* out_name, int sufx)
 {
-	create_path(SAVESTATE_DIR, CoreName);
+	create_path(SAVESTATE_DIR, CoreName2);
 
-	sprintf(out_name, "%s/%s/", SAVESTATE_DIR, CoreName);
+	sprintf(out_name, "%s/%s/", SAVESTATE_DIR, CoreName2);
 	char *fname = out_name + strlen(out_name);
 
 	const char *p = strrchr(name, '/');
@@ -1262,33 +1261,22 @@ void AdjustDirectory(char *path)
 	}
 }
 
-static const char *GetRelativeFileName(const char *folder, const char *path) {
-  if (strcasestr(path, folder) == path) {
-    const char *subpath = path + strlen(folder);
-    if (*subpath != '\0')
-    {
-      if (*subpath == '/')
-      {
-        return subpath+1;
-      }
-      return subpath;
-    }
-  }
-  return NULL;
+static const char *GetRelativeFileName(const char *folder, const char *path)
+{
+	if (!*folder) return path;
+	if (strcasestr(path, folder) == path)
+	{
+		const char *subpath = path + strlen(folder);
+		if (*subpath == '/') return subpath + 1;
+	}
+	return NULL;
 }
 
 static bool IsInSameFolder(const char *folder, const char *path)
 {
-	if (strcasestr(path, folder) == path)
-	{
-		const char *subpath = path + strlen(folder) + 1;
-		if (*subpath != '\0')
-		{
-			const char *slash = strchr(subpath, '/');
-			return !slash || *(slash + 1) == '\0';
-		}
-	}
-	return false;
+	const char *p = strrchr(path, '/');
+	size_t len = p ? p - path : 0;
+	return (strlen(folder) == len) && !strncasecmp(path, folder, len);
 }
 
 static int names_loaded = 0;
