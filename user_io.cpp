@@ -310,6 +310,13 @@ char is_psx()
 	return (is_psx_type == 1);
 }
 
+static int is_cdi_type = 0;
+char is_cdi()
+{
+	if (!is_cdi_type) is_cdi_type = strcasecmp(orig_name, "CD-i") ? 2 : 1;
+	return (is_cdi_type == 1);
+}
+
 static int is_st_type = 0;
 char is_st()
 {
@@ -2073,7 +2080,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 	}
 
 	buffer_lba[index] = -1;
-	if (!index) use_save = pre;
+	if (!index || is_cdi()) use_save = pre;
 
 	if (!ret)
 	{
@@ -2610,15 +2617,21 @@ int user_io_file_tx(const char* name, unsigned char index, char opensave, char m
 
 	int dosend = 1;
 
-	int is_snes_bs = 0;
+	int snes_file = SNES_FILE_RAW;
 	if (is_snes() && bytes2send && !load_addr)
 	{
 		const char *ext = strrchr(f.name, '.');
-		if (ext && !strcasecmp(ext, ".BS")) {
-			is_snes_bs = 1;
+		if (ext) {
+			if (index == 0 || !strcasecmp(ext, ".SMC") || !strcasecmp(ext, ".SFC") || !strcasecmp(ext, ".BIN")) {
+				snes_file = SNES_FILE_ROM;
+			} else if (!strcasecmp(ext, ".BS")) {
+				snes_file = SNES_FILE_BS;
+			} else if (!strcasecmp(ext, ".SPC")) {
+				snes_file = SNES_FILE_SPC;
+			}
 		}
 
-		if (is_snes_bs) {
+		if (snes_file == SNES_FILE_BS) {
 			char *rom_path = (char*)buf;
 			strcpy(rom_path, name);
 			char *offs = strrchr(rom_path, '/');
@@ -2658,7 +2671,7 @@ int user_io_file_tx(const char* name, unsigned char index, char opensave, char m
 				sleep(1);
 			}
 		}
-		else if ((index & 0x3F) == 1) {
+		else if (snes_file == SNES_FILE_SPC) {
 			printf("Load SPC ROM.\n");
 			FileReadSec(&f, buf);
 			user_io_file_tx_data(buf, 256);
@@ -2670,7 +2683,7 @@ int user_io_file_tx(const char* name, unsigned char index, char opensave, char m
 			FileSeek(&f, 256, SEEK_SET);
 			bytes2send = 64 * 1024;
 		}
-		else {
+		else if (snes_file == SNES_FILE_ROM) {
 			printf("Load SNES ROM.\n");
 			uint8_t* buf = snes_get_header(&f);
 			hexdump(buf, 16, 0);
@@ -2759,7 +2772,7 @@ int user_io_file_tx(const char* name, unsigned char index, char opensave, char m
 			uint32_t chunk = (bytes2send > sizeof(buf)) ? sizeof(buf) : bytes2send;
 
 			FileReadAdv(&f, buf, chunk);
-			if (is_snes() && is_snes_bs) snes_patch_bs_header(&f, buf);
+			if (is_snes() && (snes_file == SNES_FILE_BS)) snes_patch_bs_header(&f, buf);
 			user_io_file_tx_data(buf, chunk);
 
 			if (use_progress) ProgressMessage("Loading", f.name, size - bytes2send, size);
@@ -3081,7 +3094,10 @@ void user_io_poll()
 				lba = spi_w(0);
 				lba = (lba & 0xFFFF) | (((uint32_t)spi_w(0)) << 16);
 				blks = ((c >> 9) & 0x3F) + 1;
-				blksz = (disk == 1 && is_psx()) ? 2352 : (128 << ((c >> 6) & 7));
+				if ((disk == 0 && is_cdi()) || (disk == 1 && is_psx()))
+					blksz = 2352;
+				else
+					blksz = 128 << ((c >> 6) & 7);
 
 				sz = blksz * blks;
 				if (sz > sizeof(buffer[0]))
@@ -3204,11 +3220,16 @@ void user_io_poll()
 			else if (op & 1)
 			{
 				uint32_t buf_n = sizeof(buffer[0]) / blksz;
-				unsigned int psx_blksz = 0;
 				if (is_psx() && blksz == 2352)
 				{
 					//returns 0 if the mounted disk is not a chd, otherwise returns the chd hunksize in bytes
-					psx_blksz = psx_chd_hunksize();
+					unsigned int psx_blksz = psx_chd_hunksize();
+					if (psx_blksz && psx_blksz <= sizeof(buffer[0])) buf_n = psx_blksz / blksz;
+				}
+				else if (is_cdi() && blksz == 2352)
+				{
+					//returns 0 if the mounted disk is not a chd, otherwise returns the chd hunksize in bytes
+					unsigned int psx_blksz = cdi_chd_hunksize();
 					if (psx_blksz && psx_blksz <= sizeof(buffer[0])) buf_n = psx_blksz / blksz;
 				}
 				//printf("SD RD (%llu,%d) on %d, WIDE=%d\n", lba, blksz, disk, fio_size);
@@ -3223,6 +3244,13 @@ void user_io_poll()
 					{
 						diskled_on();
 						psx_read_cd(buffer[disk], lba, buf_n);
+						done = 1;
+						buffer_lba[disk] = lba;
+					}
+					else if (blksz == 2352 && is_cdi())
+					{
+						diskled_on();
+						cdi_read_cd(buffer[disk], lba, buf_n);
 						done = 1;
 						buffer_lba[disk] = lba;
 					}
@@ -3301,6 +3329,11 @@ void user_io_poll()
 					if (blksz == 2352 && is_psx())
 					{
 						psx_read_cd(buffer[disk], lba, buf_n);
+						buffer_lba[disk] = lba;
+					}
+					else if (blksz == 2352 && is_cdi())
+					{
+						cdi_read_cd(buffer[disk], lba, buf_n);
 						buffer_lba[disk] = lba;
 					}
 					else if (FileSeek(&sd_image[disk], lba * blksz, SEEK_SET) &&
@@ -3602,6 +3635,7 @@ void user_io_poll()
 	if (is_megacd()) mcd_poll();
 	if (is_pce()) pcecd_poll();
 	if (is_saturn()) saturn_poll();
+	if (is_cdi()) cdi_poll();
 	if (is_psx()) psx_poll();
 	if (is_neogeo_cd()) neocd_poll();
 	if (is_n64()) n64_poll();
@@ -4194,6 +4228,17 @@ bool user_io_screenshot(const char *pngname, int rescale)
 	}
 	else
 	{
+    int scwidth = ms->output_width;
+    int scheight = ms->output_height;
+
+    if (video_get_rotated())
+    {
+
+      //If the video is rotated, the scaled output resolution results in a squished image.
+      //Calculate the scaled output res using the original AR
+      scwidth = scheight * ((float)ms->width/ms->height);
+    }
+
 		const char *basename = last_filename;
 		if( pngname && *pngname )
 			basename = pngname;
@@ -4210,7 +4255,7 @@ bool user_io_screenshot(const char *pngname, int rescale)
 		/* do we want to save a rescaled image? */
 		if (rescale)
 		{
-			Imlib_Image im_scaled=imlib_create_cropped_scaled_image(0,0,ms->width,ms->height,ms->output_width,ms->output_height);
+			Imlib_Image im_scaled=imlib_create_cropped_scaled_image(0,0,ms->width,ms->height,scwidth,scheight);
 			imlib_free_image_and_decache();
 			imlib_context_set_image(im_scaled);
 		}
