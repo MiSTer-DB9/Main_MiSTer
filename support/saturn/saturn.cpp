@@ -12,7 +12,7 @@
 #include "saturn.h"
 
 static int need_reset = 0;
-uint32_t frame_cnt = 0;
+uint32_t saturn_frame_cnt = 0;
 uint8_t time_mode;
 
 static uint32_t CalcTimerOffset(uint8_t speed) {
@@ -73,15 +73,21 @@ void saturn_poll()
 		DisableIO();
 
 		satcdd.Update();
-		frame_cnt++;
+		saturn_frame_cnt++;
 
-#ifdef SATURN_DEBUG
 		unsigned long curr_timer = GetTimer(0);
 		if (curr_timer >= poll_timer) {
+			poll_timer = curr_timer + CalcTimerOffset(time_mode);
+#ifdef SATURN_DEBUG
+			user_io_status_set("[63]", 1); 
 			printf("\x1b[32mSaturn: ");
 			printf("Time over: next = %lu, curr = %lu", poll_timer, curr_timer);
 			printf("\n\x1b[0m");
+#endif // SATURN_DEBUG
 		}
+#ifdef SATURN_DEBUG
+		else 
+			user_io_status_set("[63]", 0);
 #endif // SATURN_DEBUG
 	}
 }
