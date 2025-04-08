@@ -1126,6 +1126,7 @@ enum QUIRK
 	QUIRK_JOYCON,
 	QUIRK_LIGHTGUN_CRT,
 	QUIRK_LIGHTGUN,
+	QUIRK_LIGHTGUN_MOUSE,
 	QUIRK_WHEEL,
 };
 
@@ -1559,6 +1560,7 @@ int input_has_lightgun()
 		if (input[i].quirk == QUIRK_TOUCHGUN) return 1;
 		if (input[i].quirk == QUIRK_LIGHTGUN) return 1;
 		if (input[i].quirk == QUIRK_LIGHTGUN_CRT) return 1;
+		if (input[i].quirk == QUIRK_LIGHTGUN_MOUSE) return 1;
 	}
 	return 0;
 }
@@ -2513,7 +2515,9 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 		if (input[dev].timeout > 0) input[dev].timeout = cfg.bt_auto_disconnect * 10;
 
 		//mouse
-		if (ev->code >= BTN_MOUSE && ev->code < BTN_JOYSTICK)
+		//if the lightgun mouse quirk is set then don't pass these button presses to the mouse system
+		//let them get handled and mapped like regular buttons
+		if (ev->code >= BTN_MOUSE && ev->code < BTN_JOYSTICK && input[dev].quirk != QUIRK_LIGHTGUN_MOUSE)
 		{
 			if (ev->value <= 1)
 			{
@@ -2648,7 +2652,9 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 
 	if (!input[dev].num)
 	{
-		int assign_btn = ((input[dev].quirk == QUIRK_PDSP || input[dev].quirk == QUIRK_MSSP) && (ev->type == EV_REL || ev->type == EV_KEY));
+		bool assign_btn = ((input[dev].quirk == QUIRK_PDSP || input[dev].quirk == QUIRK_MSSP) && (ev->type == EV_REL || ev->type == EV_KEY));
+		assign_btn |= (input[dev].quirk == QUIRK_LIGHTGUN_MOUSE && ev->type == EV_KEY && ev->value == 1 && ev->code == BTN_MOUSE);
+
 		if (!assign_btn && ev->type == EV_KEY && ev->value >= 1 && ev->code >= 256)
 		{
 			for (int i = SYS_BTN_RIGHT; i <= SYS_BTN_START; i++)
@@ -4185,6 +4191,43 @@ static int vcs_proc(int dev, input_event *ev)
 	return 1;
 }
 
+void openfire_signal()
+{
+	for (int i = 0; i < NUMDEV; i++)
+	{
+		if (input[i].vid == 0xf143 && strstr(input[i].name, "OpenFIRE ") &&
+			strstr(input[i].devname, "mouse") == NULL)
+		{
+			// OF generates 3 devices, so just focus on the one actual gamepad slot.
+			char *nameInit = input[i].name;
+			if (memcmp(nameInit+strlen(input[i].name)-5, "Mouse", 5) != 0 && memcmp(nameInit+strlen(input[i].name)-8, "Keyboard", 8) != 0)
+			{
+				char mname[strlen(input[i].name)];
+				strcpy(mname, input[i].name);
+
+				// Cleanup mname to replace offending characters not used in device filepath.
+				char *p;
+				while ((p = strchr(mname, '/'))) *p = '_';
+				while ((p = strchr(mname, ' '))) *p = '_';
+				while ((p = strchr(mname, '*'))) *p = '_';
+				while ((p = strchr(mname, ':'))) *p = '_';
+
+				char devicePath[29+strlen(mname)+strlen(strrchr(input[i].id, '/')+1)];
+				sprintf(devicePath, "/dev/serial/by-id/usb-%s_%s-if00", mname, strrchr(input[i].id, '/')+1);
+
+				FILE *deviceFile = fopen(devicePath, "r+");
+				if(deviceFile == NULL) {
+					printf("Failed to send command to %s: device path doesn't exist?\n", input[i].name);
+				} else {
+					fprintf(deviceFile, "M0x9");
+					printf("%s (device no. %i) set to MiSTer-compatible mode.\n", input[i].name, i);
+					fclose(deviceFile);
+				}
+			}
+		}
+	}
+}
+
 void check_joycon()
 {
 	while (1)
@@ -4884,6 +4927,64 @@ int input_test(int getchar)
 							input_lightgun_load(n);
 						}
 
+						//OpenFIRE Lightgun
+						//!Note that OF has a user-configurable PID, but the VID is reserved and every device name has the prefix "OpenFIRE"
+						if (input[n].vid == 0xf143 && strstr(input[n].name, "OpenFIRE "))
+						{
+							// OF generates 3 devices, so just focus on the one actual gamepad slot.
+							char *nameInit = input[n].name;
+							if(memcmp(nameInit+strlen(input[n].name)-5, "Mouse", 5) != 0 && memcmp(nameInit+strlen(input[n].name)-8, "Keyboard", 8) != 0)
+							{
+								input[n].quirk = QUIRK_LIGHTGUN;
+								input[n].lightgun = 1;
+								input[n].guncal[0] = -32767;
+								input[n].guncal[1] = 32767;
+								input[n].guncal[2] = -32767;
+								input[n].guncal[3] = 32767;
+								input_lightgun_load(n);
+							}
+						}
+
+						//Blamcon Lightgun
+						if (input[n].vid == 0x3673 && ((input[n].pid >= 0x0100 && input[n].pid <= 0x0103) || (input[n].pid >= 0x0200 && input[n].pid <= 0x0203)))
+						{
+							input[n].quirk = QUIRK_LIGHTGUN;
+							input[n].lightgun = 1;
+							input[n].guncal[0] = 0;
+							input[n].guncal[1] = 32767;
+							input[n].guncal[2] = 0;
+							input[n].guncal[3] = 32767;
+							input_lightgun_load(n);
+						}
+
+						//Retroshooter
+						if (input[n].vid == 0x0483 && input[n].pid >= 0x5750 && input[n].pid <= 0x5753)
+						{
+							input[n].quirk = QUIRK_LIGHTGUN_MOUSE;
+							input[n].lightgun = 1;
+							input[n].guncal[0] = 0;
+							input[n].guncal[1] = 767;
+							input[n].guncal[2] = 0;
+							input[n].guncal[3] = 1023;
+							input_lightgun_load(n);
+						}
+
+						//Sinden Lightgun (two different PIDs, four different PIDs depending on gun color/config)                                                                                                   
+						if ((input[n].vid == 0x16c0 || input[n].vid == 0x16d0) && (                             
+            					input[n].pid == 0x0f01 ||                             
+            					input[n].pid == 0x0f02 ||                             
+            					input[n].pid == 0x0f38 ||                             
+            					input[n].pid == 0x0f39))                             
+						{                             
+    							input[n].quirk = QUIRK_LIGHTGUN;                             
+    							input[n].lightgun = 1;                             
+    							input[n].guncal[0] = 0;                             
+    							input[n].guncal[1] = 65535;                             
+    							input[n].guncal[2] = 0;                             
+    							input[n].guncal[3] = 65535;                             
+    							input_lightgun_load(n);                             
+						} 
+
 						//Madcatz Arcade Stick 360
 						if (input[n].vid == 0x0738 && input[n].pid == 0x4758) input[n].quirk = QUIRK_MADCATZ360;
 
@@ -4961,6 +5062,7 @@ int input_test(int getchar)
 
 			mergedevs();
 			check_joycon();
+			openfire_signal();
 			setup_wheels();
 			for (int i = 0; i < n; i++)
 			{
@@ -5384,7 +5486,7 @@ int input_test(int getchar)
 									}
 								}
 
-								if (ev.type == EV_ABS && input[i].quirk == QUIRK_LIGHTGUN)
+								if (ev.type == EV_ABS && (input[i].quirk == QUIRK_LIGHTGUN || input[i].quirk == QUIRK_LIGHTGUN_MOUSE))
 								{
 									menu_lightgun_cb(i, ev.type, ev.code, ev.value);
 
@@ -5456,7 +5558,7 @@ int input_test(int getchar)
 
 								if (ev.type == EV_KEY && user_io_osd_is_visible())
 								{
-									if (input[i].quirk == QUIRK_WIIMOTE || input[i].quirk == QUIRK_LIGHTGUN_CRT || input[i].quirk == QUIRK_LIGHTGUN)
+									if (input[i].quirk == QUIRK_WIIMOTE || input[i].quirk == QUIRK_LIGHTGUN_CRT || input[i].quirk == QUIRK_LIGHTGUN || input[i].quirk == QUIRK_LIGHTGUN_MOUSE)
 									{
 										if (menu_lightgun_cb(i, ev.type, ev.code, ev.value)) continue;
 									}
@@ -5726,29 +5828,32 @@ int input_poll(int getchar)
 	{
 		for (int i = 0; i < NUMPLAYERS; i++)
 		{
+			int send = 0;
 			if (af_delay[i] < AF_MIN) af_delay[i] = AF_MIN;
 
-			if (!time[i]) time[i] = GetTimer(af_delay[i]);
-			int send = 0;
-			int newdir = ((((uint32_t)(joy[i]) | (uint32_t)(joy[i] >> 32)) & 0xF) != (((uint32_t)(joy_prev[i]) | (uint32_t)(joy_prev[i] >> 32)) & 0xF));
-			
-			if (joy[i] != joy_prev[i])
+			/* Autofire handler */
+			if (joy[i] & autofire[i])
 			{
-				if ((joy[i] ^ joy_prev[i]) & autofire[i])
+				if (!time[i]) time[i] = GetTimer(af_delay[i]);
+				else if ((joy[i] ^ joy_prev[i]) & autofire[i])
 				{
 					time[i] = GetTimer(af_delay[i]);
 					af[i] = 0;
 				}
-
-				send = 1;
-				joy_prev[i] = joy[i];
+				else if (CheckTimer(time[i]))
+				{
+					time[i] = GetTimer(af_delay[i]);
+					af[i] = !af[i];
+					send = 1;
+				}
 			}
 
-			if (CheckTimer(time[i]))
+			int newdir = ((((uint32_t)(joy[i]) | (uint32_t)(joy[i] >> 32)) & 0xF) != (((uint32_t)(joy_prev[i]) | (uint32_t)(joy_prev[i] >> 32)) & 0xF));
+
+			if (joy[i] != joy_prev[i])
 			{
-				time[i] = GetTimer(af_delay[i]);
-				af[i] = !af[i];
-				if (joy[i] & autofire[i]) send = 1;
+				joy_prev[i] = joy[i];
+				send = 1;
 			}
 
 			if (send)
