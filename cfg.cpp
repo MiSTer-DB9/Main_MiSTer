@@ -48,6 +48,7 @@ static const ini_var_t ini_vars[] =
 	{ "VIDEO_MODE_NTSC", (void*)(cfg.video_conf_ntsc), STRING, 0, sizeof(cfg.video_conf_ntsc) - 1 },
 	{ "VIDEO_INFO", (void*)(&(cfg.video_info)), UINT8, 0, 10 },
 	{ "VSYNC_ADJUST", (void*)(&(cfg.vsync_adjust)), UINT8, 0, 2 },
+	{ "SUBCARRIER", (void*)(&(cfg.subcarrier)), UINT8, 0, 1 },
 	{ "HDMI_AUDIO_96K", (void*)(&(cfg.hdmi_audio_96k)), UINT8, 0, 1 },
 	{ "DVI_MODE", (void*)(&(cfg.dvi_mode)), UINT8, 0, 1 },
 	{ "HDMI_LIMITED", (void*)(&(cfg.hdmi_limited)), UINT8, 0, 2 },
@@ -64,7 +65,7 @@ static const ini_var_t ini_vars[] =
 	{ "FB_SIZE", (void*)(&(cfg.fb_size)), UINT8, 0, 4 },
 	{ "FB_TERMINAL", (void*)(&(cfg.fb_terminal)), UINT8, 0, 1 },
 	{ "OSD_TIMEOUT", (void*)(&(cfg.osd_timeout)), INT16, 0, 3600 },
-	{ "DIRECT_VIDEO", (void*)(&(cfg.direct_video)), UINT8, 0, 1 },
+	{ "DIRECT_VIDEO", (void*)(&(cfg.direct_video)), UINT8, 0, 2 },
 	{ "OSD_ROTATE", (void*)(&(cfg.osd_rotate)), UINT8, 0, 2 },
 	{ "DEADZONE", (void*)(&(cfg.controller_deadzone)), STRINGARR, sizeof(cfg.controller_deadzone) / sizeof(*cfg.controller_deadzone), sizeof(*cfg.controller_deadzone) },
 	{ "GAMEPAD_DEFAULTS", (void*)(&(cfg.gamepad_defaults)), UINT8, 0, 1 },
@@ -130,6 +131,7 @@ static const ini_var_t ini_vars[] =
 	{ "OSD_LOCK", (void*)(&(cfg.osd_lock)), STRING, 0, sizeof(cfg.osd_lock) - 1 },
 	{ "OSD_LOCK_TIME", (void*)(&(cfg.osd_lock_time)), UINT16, 0, 60 },
 	{ "DEBUG", (void *)(&(cfg.debug)), UINT8, 0, 1 },
+	{ "LOOKAHEAD", (void *)(&(cfg.lookahead)), UINT8, 0, 3 },
 	{ "MAIN", (void*)(&(cfg.main)), STRING, 0, sizeof(cfg.main) - 1 },
 	{"VFILTER_INTERLACE_DEFAULT", (void*)(&(cfg.vfilter_interlace_default)), STRING, 0, sizeof(cfg.vfilter_interlace_default) - 1 },
 };
@@ -580,6 +582,8 @@ void cfg_parse()
 	cfg.rumble = 1;
 	cfg.wheel_force = 50;
 	cfg.dvi_mode = 2;
+	cfg.subcarrier = 0;
+	cfg.lookahead = 2;
 	cfg.hdr = 0;
 	cfg.hdr_max_nits = 1000;
 	cfg.hdr_avg_nits = 250;
