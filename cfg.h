@@ -25,6 +25,7 @@ typedef struct {
 	float refresh_max;
 	uint8_t controller_info;
 	uint8_t vsync_adjust;
+	uint8_t subcarrier;
 	uint8_t kbd_nomouse;
 	uint8_t mouse_throttle;
 	uint8_t bootscreen;
@@ -98,6 +99,7 @@ typedef struct {
 	char osd_lock[25];
 	uint16_t osd_lock_time;
 	char debug;
+	uint8_t lookahead;
 	char main[1024];
 	char vfilter_interlace_default[1023];
 } cfg_t;
