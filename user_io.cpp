@@ -2427,74 +2427,43 @@ int user_io_use_cheats()
 	return use_cheats;
 }
 
-uint64_t joyraw_count = 0;
-uint64_t last_joyraw = 0x0;
-uint8_t joyraw_button1 =0;
-uint8_t joyraw_button2 =0;
-uint8_t joyraw_up = 0;
-uint8_t joyraw_down = 0;
-uint8_t joyraw_left = 0;
-uint8_t joyraw_right = 0;  
-uint16_t user_io_joyraw_check_change()
+static void user_io_joyraw_check_change()
 {
+	static uint8_t joyraw_mapping[12] = {
+		KEY_RIGHT,      // 0    R
+		KEY_LEFT,       // 1    L
+		KEY_DOWN,       // 2    D
+		KEY_UP,         // 3    U
+		KEY_ENTER,      // 4    A
+		KEY_ESC,        // 5    B
+		KEY_RESERVED,   // 6    C
+		KEY_TAB,        // 7    X
+		KEY_RESERVED,   // 8    Y
+		KEY_RESERVED,   // 9    Z
+		KEY_RESERVED,   // 10   S
+		KEY_GRAVE       // 11   M
+	};
+	static uint16_t joyraw_bits = 0, joyraw_count = 0;
 	uint16_t joyraw;
 	spi_uio_cmd_cont(UIO_USERIO_GET);
 	joyraw = spi_w(0);
 	DisableIO();
-	
+
 	if (joyraw_count == 3000) {
 		joyraw_count = 0;
-		
-		if ( (joyraw >> 5) & 0x1 & !joyraw_button2) {  
-			user_io_kbd(KEY_ESC, 1);
-			joyraw_button2 =1;
-		} else if (joyraw_button2==1){
-			user_io_kbd(KEY_ESC, 0);
-			joyraw_button2=0;
-		}
-		
-		if ( (joyraw >> 4) & 0x1 & !joyraw_button1) {  
-			user_io_kbd(KEY_ENTER, 1);
-			joyraw_button1 =1;
-		} else if (joyraw_button1==1){
-			user_io_kbd(KEY_ENTER, 0);
-			joyraw_button1=0;
-		}
-		
-		if ( (joyraw >> 3) & 0x1 & !joyraw_up) {  
-			user_io_kbd(KEY_UP, 1);
-			joyraw_up = 1 ;
-		} else if (joyraw_up==1){
-			user_io_kbd(KEY_UP, 0);
-			joyraw_up = 0;
-		}
 
-		if ( (joyraw >> 2) & 0x1 & !joyraw_down) {  
-			user_io_kbd(KEY_DOWN, 1);
-			joyraw_down =1;
-		} else if (joyraw_down==1){
-			user_io_kbd(KEY_DOWN, 0);
-			joyraw_down = 0;
-		}
-	
-		if ( (joyraw >> 1) & 0x1& 0x1 & !joyraw_left) { 
-			user_io_kbd(KEY_LEFT, 1);
-			joyraw_left = 1 ;
-		} else if (joyraw_left==1){
-			user_io_kbd(KEY_LEFT, 0);
-			joyraw_left = 0 ;
-		}
-		if ( joyraw  & 0x1 & !joyraw_right) { 
-			user_io_kbd(KEY_RIGHT, 1);
-			joyraw_right = 1 ;
-		} else if (joyraw_right==1){
-			user_io_kbd(KEY_RIGHT, 0);
-			joyraw_right = 0 ;
+		for (uint8_t i = 0; i < 12; i++) {
+			if ((joyraw >> i) & 0x1) {
+				user_io_kbd(joyraw_mapping[i], 1);
+				joyraw_bits |= 1 << i;
+			} else if ((joyraw_bits >> i) & 0x1) {
+				user_io_kbd(joyraw_mapping[i], 0);
+				joyraw_bits &= ~(1 << i);
+			}
 		}
 	}
-	joyraw_count ++;
-	return joyraw;
-}  
+	joyraw_count++;
+}
 
 static void check_status_change()
 {
