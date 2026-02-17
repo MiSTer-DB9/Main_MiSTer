@@ -775,11 +775,11 @@ static void parse_config()
 				{
 					overlap[start] |= mask[start];
 					mask[start] |= 1;
-			}
+				}
 				else
-			{
+				{
 					printf("Invalid OSD option: %s\n", p);
-			}
+				}
 			}
 			else if (p[0] == 'O' || p[0] == 'o')
 			{
@@ -868,25 +868,25 @@ static void parse_config()
 				if (p[idx] == 'C')
 				{
 					idx++;
-				uint32_t load_addr = 0;
-				if (substrcpy(str, p, 3))
-				{
-					load_addr = strtoul(str, NULL, 16);
-					if (load_addr < 0x20000000 || load_addr >= 0x40000000)
+					uint32_t load_addr = 0;
+					if (substrcpy(str, p, 3))
 					{
-						printf("Loading address 0x%X is outside the supported range! Using normal load.\n", load_addr);
-						load_addr = 0;
+						load_addr = strtoul(str, NULL, 16);
+						if (load_addr < 0x20000000 || load_addr >= 0x40000000)
+						{
+							printf("Loading address 0x%X is outside the supported range! Using normal load.\n", load_addr);
+							load_addr = 0;
+						}
 					}
-				}
 
 					sprintf(str, "%s.f%c", user_io_get_core_name(), p[idx]);
 					substrcpy(ext, p, 1);
 					while (strlen(ext) % 3) strcat(ext, " ");
 
-				if (FileLoadConfig(str, str, sizeof(str)) && str[0])
-				{
+					if (FileLoadConfig(str, str, sizeof(str)) && str[0])
+					{
 						idx = p[idx] - '0';
-					StoreIdx_F(idx, str);
+						StoreIdx_F(idx, str);
 						user_io_file_tx(str, (user_io_ext_idx(str, ext) << 6) | idx, opensave, 0, 0, load_addr);
 						if (!idx) boot0_loaded = 1;
 
@@ -1425,7 +1425,7 @@ void user_io_init(const char *path, const char *xml)
 	}
 
 	video_init();
-	if(strlen(cfg.font)) LoadFont(cfg.font);
+	if (strlen(cfg.font)) LoadFont(cfg.font);
 	load_volume();
 
 	user_io_send_buttons(1);
@@ -1437,17 +1437,17 @@ void user_io_init(const char *path, const char *xml)
 		printf("Unable to identify core (%x)!\n", core_type);
 		break;
 
-    case CORE_TYPE_SHARPMZ:
+	case CORE_TYPE_SHARPMZ:
 		printf("Identified Sharp MZ Series core");
 		user_io_set_core_name("sharpmz");
-        sharpmz_init();
+		sharpmz_init();
 		parse_buttons();
 		break;
 
 	case CORE_TYPE_8BIT:
 		// try to load config
 		name = user_io_create_config_name(1);
-		if(strlen(name) > 0)
+		if (strlen(name) > 0)
 		{
 			if (!is_st() && !is_minimig())
 			{
@@ -1521,20 +1521,20 @@ void user_io_init(const char *path, const char *xml)
 						// legacy style of rom
 						if (!boot0_loaded)
 						{
-						sprintf(mainpath, "%s/boot.rom", home);
-						if (!user_io_file_tx(mainpath))
-						{
-							strcpy(name + strlen(name) - 3, "ROM");
-							sprintf(mainpath, "%s/%s", get_rbf_dir(), name);
-							if (!get_rbf_dir()[0] || !user_io_file_tx(mainpath))
+							sprintf(mainpath, "%s/boot.rom", home);
+							if (!user_io_file_tx(mainpath))
 							{
-								if (!user_io_file_tx(name))
+								strcpy(name + strlen(name) - 3, "ROM");
+								sprintf(mainpath, "%s/%s", get_rbf_dir(), name);
+								if (!get_rbf_dir()[0] || !user_io_file_tx(mainpath))
 								{
-									sprintf(mainpath, "bootrom/%s", name);
-									user_io_file_tx(mainpath);
+									if (!user_io_file_tx(name))
+									{
+										sprintf(mainpath, "bootrom/%s", name);
+										user_io_file_tx(mainpath);
+									}
 								}
 							}
-						}
 						}
 
 						// cheats for boot file
@@ -1571,29 +1571,29 @@ void user_io_init(const char *path, const char *xml)
 
 					if (!boot0_mounted)
 					{
-					sprintf(mainpath, "%s/boot.vhd", home);
-					if (FileExists(mainpath))
-					{
-						user_io_set_index(0);
-						user_io_file_mount(mainpath, 0);
-					}
-					else
-					{
-						strcpy(name + strlen(name) - 3, "VHD");
-						sprintf(mainpath, "%s/%s", get_rbf_dir(), name);
+						sprintf(mainpath, "%s/boot.vhd", home);
 						if (FileExists(mainpath))
 						{
 							user_io_set_index(0);
 							user_io_file_mount(mainpath, 0);
 						}
-						else if (FileExists(name))
+						else
 						{
-							user_io_set_index(0);
-							user_io_file_mount(name, 0);
+							strcpy(name + strlen(name) - 3, "VHD");
+							sprintf(mainpath, "%s/%s", get_rbf_dir(), name);
+							if (FileExists(mainpath))
+							{
+								user_io_set_index(0);
+								user_io_file_mount(mainpath, 0);
+							}
+							else if (FileExists(name))
+							{
+								user_io_set_index(0);
+								user_io_file_mount(name, 0);
+							}
 						}
 					}
 				}
-			}
 			}
 
 			parse_buttons();
@@ -2044,11 +2044,11 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 				writable = FileCanWrite(name);
 				ret = FileOpenEx(&sd_image[index], name, writable ? (O_RDWR | O_SYNC) : O_RDONLY);
 				if (ret && len > 4) {
-					if (!strcasecmp(name + len - 4, ".d64") 
-						|| !strcasecmp(name + len - 4, ".g64") 
-						|| !strcasecmp(name + len - 4, ".d71") 
+					if (!strcasecmp(name + len - 4, ".d64")
+						|| !strcasecmp(name + len - 4, ".g64")
+						|| !strcasecmp(name + len - 4, ".d71")
 						|| !strcasecmp(name + len - 4, ".g71"))
-				{
+					{
 						img_type = c64_openGCR(name, sd_image + index, index);
 						ret = img_type < 0 ? 0 : 1;
 						sd_type[index] = SD_TYPE_C64;
@@ -2065,7 +2065,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 					}
 				}
 
-				if (ret && is_c128()) 
+				if (ret && is_c128())
 				{
 					printf("Disk image type: %d\n", img_type);
 					user_io_set_aindex(img_type << 6 | index);
@@ -2521,7 +2521,7 @@ static void check_status_change()
 static void show_core_info(int info_n)
 {
 	int i = 2;
-		user_io_read_confstr();
+	user_io_read_confstr();
 
 	while (1)
 	{
@@ -3042,8 +3042,8 @@ void user_io_poll()
 		sysled_enable(1);
 
 		uint16_t sd_req = ide_check();
-			ide_io(0, sd_req & 7);
-			ide_io(1, (sd_req >> 3) & 7);
+		ide_io(0, sd_req & 7);
+		ide_io(1, (sd_req >> 3) & 7);
 		if (sd_req & 0x0100) ide_cdda_send_sector();
 		UpdateDriveStatus();
 
@@ -3335,7 +3335,7 @@ void user_io_poll()
 				{
 					buffer_lba[disk] = -1;
 				}
-				else if(done && (lba + blks - buffer_lba[disk]) == buf_n)
+				else if (done && (lba + blks - buffer_lba[disk]) == buf_n)
 				{
 					diskled_on();
 					lba += blks;
@@ -3377,7 +3377,7 @@ void user_io_poll()
 
 	static uint8_t leds = 0;
 
-	if(use_ps2ctl && !is_minimig() && !is_archie())
+	if (use_ps2ctl && !is_minimig() && !is_archie())
 	{
 		leds |= (KBD_LED_FLAG_STATUS | KBD_LED_CAPS_CONTROL);
 
@@ -3397,7 +3397,7 @@ void user_io_poll()
 				switch (cmd)
 				{
 				case 0xff:
-						ps2_kbd_scan_set = 2;
+					ps2_kbd_scan_set = 2;
 					kbd_reply(0xFA);
 					kbd_reply(0xAA);
 					break;
@@ -3409,14 +3409,14 @@ void user_io_poll()
 					break;
 
 				case 0xf0: // scan get/set
-						kbd_reply(0xFA);
+					kbd_reply(0xFA);
 					byte++;
-						break;
+					break;
 
 				case 0xf6: // set default parameters
-						kbd_reply(0xFA);
-						ps2_kbd_scan_set = 2;
-						break;
+					kbd_reply(0xFA);
+					ps2_kbd_scan_set = 2;
+					break;
 
 				case 0xf3: // set type rate
 					kbd_reply(0xFA);
@@ -3451,7 +3451,7 @@ void user_io_poll()
 					kbd_reply(0xFA);
 					byte = 0;
 					if (kbd_ctl & 4) leds |= KBD_LED_CAPS_STATUS;
-						else leds &= ~KBD_LED_CAPS_STATUS;
+					else leds &= ~KBD_LED_CAPS_STATUS;
 					break;
 
 				case 0xf0:
@@ -3553,7 +3553,7 @@ void user_io_poll()
 		if (!use_ps2ctl)
 		{
 			uint16_t s = user_io_kbdled_get_status();
-			if(s & 0x100) use_ps2ctl = 1;
+			if (s & 0x100) use_ps2ctl = 1;
 			if (!use_ps2ctl) leds = (uint8_t)s;
 		}
 
@@ -3578,7 +3578,7 @@ void user_io_poll()
 	{
 		res_timer = GetTimer(1000);
 	}
-	else if(CheckTimer(res_timer))
+	else if (CheckTimer(res_timer))
 	{
 		if (is_menu())
 		{
@@ -3614,7 +3614,7 @@ void user_io_poll()
 		res_timer = GetTimer(500);
 		if (!minimig_get_adjust())
 		{
-			if(is_minimig()) minimig_adjust_vsize(0);
+			if (is_minimig()) minimig_adjust_vsize(0);
 			video_mode_adjust();
 		}
 	}
@@ -4076,7 +4076,7 @@ void user_io_kbd(uint16_t key, int press)
 				if (key == KEY_MENU) key = KEY_F12;
 				if (key != KEY_F12 || !block_F12)
 				{
-				if (osd_is_visible) menu_key_set(UPSTROKE | key);
+					if (osd_is_visible) menu_key_set(UPSTROKE | key);
 
 					// these modifiers should be passed to core even if OSD is open or they will get stuck!
 					if (!osd_is_visible || key == KEY_LEFTALT || key == KEY_RIGHTALT || key == KEY_LEFTMETA || key == KEY_RIGHTMETA) send_keycode(key, press);
