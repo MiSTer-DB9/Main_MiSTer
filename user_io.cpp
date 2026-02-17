@@ -2443,26 +2443,50 @@ static void user_io_joyraw_check_change()
 		KEY_RESERVED,   // 10   S
 		KEY_GRAVE       // 11   M
 	};
-	static uint16_t joyraw_bits = 0, joyraw_count = 0;
-	uint16_t joyraw;
+	static uint16_t joyraw_bits = 0;
+	static uint16_t joyraw_count = 0;
+
+	// OPTIMIZATION 1: Only check if the counter is ready.
+	// Do not run SPI transactions or logic otherwise.
+	if (joyraw_count++ < 3000) {
+		return;
+	}
+	joyraw_count = 0;
+
+	// --- Start Slow Path (Only runs once every 3000 calls) ---
+
 	spi_uio_cmd_cont(UIO_USERIO_GET);
-	joyraw = spi_w(0);
+	uint16_t joyraw = spi_w(0);
 	DisableIO();
 
-	if (joyraw_count == 3000) {
-		joyraw_count = 0;
+	// OPTIMIZATION 2: Detect changes using XOR.
+	// We mask with 0xFFF because we only care about the first 12 bits.
+	uint16_t changes = (joyraw ^ joyraw_bits) & 0x0FFF;
 
-		for (uint8_t i = 0; i < 12; i++) {
-			if ((joyraw >> i) & 0x1) {
-				user_io_kbd(joyraw_mapping[i], 1);
-				joyraw_bits |= 1 << i;
-			} else if ((joyraw_bits >> i) & 0x1) {
-				user_io_kbd(joyraw_mapping[i], 0);
-				joyraw_bits &= ~(1 << i);
-			}
-		}
+	// If nothing changed, we are done. No loop, no branches.
+	if (changes == 0) {
+		return;
 	}
-	joyraw_count++;
+
+	// OPTIMIZATION 3: Iterate only over changed bits.
+	// This turns the O(12) loop into O(N), where N is the number of buttons changing.
+	// Usually N=1 or N=0.
+	while (changes) {
+		// __builtin_ctz finds the index of the first set bit (0-15) instantly
+		int i = __builtin_ctz(changes);
+
+		// Determine if this was a Press (1) or Release (0)
+		// We check the *current* joyraw state at that bit index
+		int is_pressed = (joyraw >> i) & 1;
+
+		user_io_kbd(joyraw_mapping[i], is_pressed);
+
+		// Clear this bit from 'changes' so we can find the next one
+		changes &= ~(1 << i);
+	}
+
+	// Update history
+	joyraw_bits = joyraw;
 }
 
 static void check_status_change()
