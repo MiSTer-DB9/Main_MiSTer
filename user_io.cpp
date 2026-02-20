@@ -283,7 +283,16 @@ char is_archie()
 static int is_pcxt_type = 0;
 char is_pcxt()
 {
-	if (!is_pcxt_type) is_pcxt_type = strcasecmp(orig_name, "PCXT") ? 2 : 1;
+	if (!is_pcxt_type)
+	{
+		if (!strcasecmp(orig_name, "PCXT") ||
+		    !strcasecmp(orig_name, "Tandy1000") ||
+			!strcasecmp(orig_name, "PCjr")
+		   )
+			is_pcxt_type = 1;
+		else
+			is_pcxt_type = 2;
+	}
 	return (is_pcxt_type == 1);
 }
 
@@ -389,8 +398,13 @@ void user_io_read_core_name()
 	is_gba_type = 0;
 	is_c64_type = 0;
 	is_c128_type = 0;
+	is_psx_type = 0;
+	is_cdi_type = 0;
 	is_st_type = 0;
 	is_pcxt_type = 0;
+	is_electron_type = 0;
+	is_saturn_type = 0;
+	is_n64_type = 0;
 	is_uneon_type = 0;
 	core_name[0] = 0;
 
@@ -1081,6 +1095,12 @@ void MakeFile(const char *filename, const char *data)
 	fclose(file);
 }
 
+uint16_t f12_mod;
+char is_f12_mod_needed()
+{
+	return (is_x86() || is_pcxt() || is_archie() || (f12_mod != 0));
+}
+
 int GetUARTMode()
 {
 	struct stat filestat;
@@ -1324,6 +1344,9 @@ void user_io_init(const char *path, const char *xml)
 	static char mainpath[512];
 	core_name[0] = 0;
 	disable_osd = 0;
+
+	// Clean up old game ID when loading a new core
+	unlink("/tmp/GAMEID");
 
 	// we need to set the directory to where the XML file (MRA) is
 	// not the RBF. The RBF will be in arcade, which the user shouldn't
@@ -1655,6 +1678,8 @@ void user_io_init(const char *path, const char *xml)
 	SetMidiLinkMode(midilink);
 	SetUARTMode(uartmode);
 
+	f12_mod = spi_uio_cmd(UIO_GET_F12_MOD);
+
 	if (!mgl_get()->count || is_menu() || is_st() || is_archie() || user_io_core_type() == CORE_TYPE_SHARPMZ)
 	{
 		mgl_get()->done = 1;
@@ -1710,23 +1735,21 @@ void user_io_r_analog_joystick(unsigned char joystick, char valueX, char valueY)
 	}
 }
 
-void user_io_digital_joystick(unsigned char joystick, uint64_t map, int newdir)
+void user_io_digital_joystick(unsigned char joystick, uint32_t map, int newdir)
 {
 	uint8_t joy = (joystick>1 || !joyswap) ? joystick : joystick ^ 1;
+
 	static int use32 = 0;
-	// primary button mappings are in 31:0, alternate mappings are in 64:32.
-	// take the logical OR to ensure a held button isn't overriden
-	// by other mapping being pressed
-	uint32_t bitmask = (uint32_t)(map) | (uint32_t)(map >> 32);
-	use32 |= bitmask >> 16;
+	use32 |= map >> 16;
+
 	spi_uio_cmd_cont((joy < 2) ? (UIO_JOYSTICK0 + joy) : (UIO_JOYSTICK2 + joy - 2));
-	spi_w(bitmask);
-	if(use32) spi_w(bitmask >> 16);
+	spi_w(map);
+	if(use32) spi_w(map >> 16);
 	DisableIO();
 
 	if (!is_minimig() && joy_transl == 1 && newdir)
 	{
-		user_io_l_analog_joystick(joystick, (bitmask & 2) ? 128 : (bitmask & 1) ? 127 : 0, (bitmask & 8) ? 128 : (bitmask & 4) ? 127 : 0);
+		user_io_l_analog_joystick(joystick, (map & 2) ? 128 : (map & 1) ? 127 : 0, (map & 8) ? 128 : (map & 4) ? 127 : 0);
 	}
 }
 
@@ -2422,6 +2445,55 @@ uint32_t user_io_get_file_crc()
 	return file_crc;
 }
 
+void user_io_write_gameid(const char *filename, uint32_t crc32_val, const char *serial)
+{
+	if (!cfg.log_file_entry) return;
+
+	// Extract basename from filename
+	const char *fname = strrchr(filename, '/');
+	if (!fname) fname = filename;
+	else fname++;
+
+	// Skip BIOS files
+	if (strncasecmp(fname, "boot", 4) == 0 || strcasestr(fname, "bios"))
+	{
+		return;
+	}
+
+	FILE *f = fopen("/tmp/GAMEID", "w");
+	if (!f)
+	{
+		printf("Failed to write /tmp/GAMEID\n");
+		return;
+	}
+
+	int wrote_something = 0;
+	printf("Game ID: %s", fname);
+
+	if (crc32_val)
+	{
+		fprintf(f, "CRC32: %08X\n", crc32_val);
+		printf(" [CRC32: %08X]", crc32_val);
+		wrote_something = 1;
+	}
+	if (serial && serial[0])
+	{
+		fprintf(f, "Serial: %s\n", serial);
+		printf(" [%s]", serial);
+		wrote_something = 1;
+	}
+
+	// Ensure we always write something to the file
+	if (!wrote_something)
+	{
+		fprintf(f, "# No game ID available\n");
+	}
+
+	printf("\n");
+	fflush(f);
+	fclose(f);
+}
+
 int user_io_use_cheats()
 {
 	return use_cheats;
@@ -2791,6 +2863,8 @@ int user_io_file_tx(const char* name, unsigned char index, char opensave, char m
 	printf("Done.\n");
 	printf("CRC32: %08X\n", file_crc);
 
+	user_io_write_gameid(name, file_crc);
+
 	FileClose(&f);
 
 	if (opensave)
@@ -3073,7 +3147,7 @@ void user_io_poll()
 			int ack = 0;
 			int op = 0;
 			static uint8_t buffer[16][16384];
-			uint64_t lba;
+			uint64_t lba = 0;
 			uint32_t blksz, blks, sz;
 
 			if (is_uneon() && i == 3)
@@ -3165,9 +3239,11 @@ void user_io_poll()
 				else if (op & 1) c64_readGCR(disk, lba, blks-1);
 				else break;
 			}
-			else if ((op == 2) && is_n64() && use_save)
+			else if (is_n64() && n64_process_save(use_save, op, lba, blksz, ack, buffer_lba[disk], buffer[disk], sizeof(*buffer), sz))
 			{
-				n64_save_savedata(lba, ack, buffer_lba[disk], buffer[disk], blksz, sz);
+				// Handled by N64 core logic.
+				// If n64_process_save returns false (e.g. use_save is off, or unsupported op), 
+				// it will fall through to the generic handler below.
 			}
 			else if (op == 2)
 			{
@@ -3218,10 +3294,6 @@ void user_io_poll()
 						}
 					}
 				}
-			}
-			else if ((op & 1) && is_n64() && use_save)
-			{
-				n64_load_savedata(lba, ack, buffer_lba[disk], buffer[disk], sizeof(*buffer), blksz, sz);
 			}
 			else if (op & 1)
 			{
@@ -3610,6 +3682,14 @@ void user_io_poll()
 			if (is_minimig()) minimig_adjust_vsize(0);
 			video_mode_adjust();
 		}
+
+		/*
+		uint32_t frcnt = spi_uio_cmd(UIO_GET_FR_CNT);
+		if (frcnt & 0x100)
+		{
+			printf("frames:%d\n", frcnt & 0xFF);
+		}
+		*/
 	}
 
 	static int prev_coldreset_req = 0;
@@ -4080,7 +4160,7 @@ void user_io_kbd(uint16_t key, int press)
 			{
 				if (is_menu() && !video_fb_state()) printf("PS2 code(make)%s for core: %d(0x%X)\n", (code & EXT) ? "(ext)" : "", code & 255, code & 255);
 				if (!osd_is_visible && !is_menu() && key == KEY_MENU && press == 3) open_joystick_setup();
-				else if ((has_menu() || osd_is_visible || (get_key_mod() & (LALT | RALT | RGUI | LGUI))) && (((key == KEY_F12) && ((!is_x86() && !is_pcxt() && !is_archie()) || (get_key_mod() & (RGUI | LGUI)))) || key == KEY_MENU))
+				else if ((has_menu() || osd_is_visible || (get_key_mod() & (LALT | RALT | RGUI | LGUI))) && (((key == KEY_F12) && (!is_f12_mod_needed() || (get_key_mod() & (RGUI | LGUI)))) || key == KEY_MENU))
 				{
 					block_F12 = 1;
 					if (press == 1) menu_key_set(KEY_F12);
