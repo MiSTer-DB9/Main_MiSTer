@@ -263,6 +263,10 @@ char * GetMidiLinkSoundfont();
 void user_io_store_filename(char *filename);
 int user_io_use_cheats();
 
+// Set when a DB9/DB15 controller is detected, cleared on keyboard/USB input.
+// Used as a guard so input_cb avoids a remove() syscall when the file doesn't exist.
+extern bool snac_detected;
+
 int process_ss(const char *rom_name, int enable = 1);
 
 void diskled_on();
