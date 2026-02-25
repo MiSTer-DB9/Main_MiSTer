@@ -2570,6 +2570,16 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 	if (ev->type != EV_KEY && ev->type != EV_ABS && ev->type != EV_REL) return;
 	if (ev->type == EV_KEY && (!ev->code || ev->code == KEY_UNKNOWN)) return;
 
+	// Non-DB9/DB15 input: clear detection so auto-enable only fires
+	// when the core is actually launched via DB9/DB15.
+	// Guard with snac_detected to avoid a remove() syscall on every keypress
+	// when no DB9/DB15 controller is in use.
+	if (ev->type == EV_KEY && ev->value && snac_detected)
+	{
+		remove("/tmp/db9_detected");
+		snac_detected = false;
+	}
+
 	static uint16_t last_axis = 0;
 
 	int sub_dev = dev;
