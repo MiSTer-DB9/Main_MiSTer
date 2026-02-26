@@ -2575,16 +2575,12 @@ static void user_io_joyraw_check_change()
 		KEY_GRAVE       // 11   M
 	};
 	static uint16_t joyraw_bits = 0;
-	static uint16_t joyraw_count = 0;
+	static uint32_t joyraw_timer = 0;
 
-	// OPTIMIZATION 1: Only check if the counter is ready.
-	// Do not run SPI transactions or logic otherwise.
-	if (joyraw_count++ < 3000) {
-		return;
-	}
-	joyraw_count = 0;
-
-	// --- Start Slow Path (Only runs once every 3000 calls) ---
+	// OPTIMIZATION 1: Only poll SPI on a fixed time interval (~20Hz).
+	// Uses a timer instead of a counter so the rate is independent of main loop speed.
+	if (joyraw_timer && !CheckTimer(joyraw_timer)) return;
+	joyraw_timer = GetTimer(50);
 
 	spi_uio_cmd_cont(UIO_USERIO_GET);
 	uint16_t joyraw = spi_w(0);
