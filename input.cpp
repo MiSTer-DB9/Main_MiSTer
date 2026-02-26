@@ -1736,6 +1736,14 @@ static void uinp_send_key(uint16_t key, int press)
 	}
 }
 
+void input_joyraw_kbd(uint16_t key, int press)
+{
+	if (video_fb_state())
+		uinp_send_key(key, press);
+	else
+		user_io_kbd(key, press);
+}
+
 static void uinp_check_key()
 {
 	if (uinp_fd > 0)

@@ -107,6 +107,7 @@ void input_lightgun_save(int idx, int32_t *cal);
 void input_switch(int grab);
 int input_state();
 void input_uinp_destroy();
+void input_joyraw_kbd(uint16_t key, int press);
 
 extern char joy_bnames[NUMBUTTONS][32];
 extern int  joy_bcount;
