@@ -2586,6 +2586,15 @@ static void user_io_joyraw_check_change()
 	uint16_t joyraw = spi_w(0);
 	DisableIO();
 
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+	if (is_minimig())
+	{
+		uint16_t uj = (minimig_get_extcfg() >> 30) & 3;
+		if (uj == 1) joyraw |= 0x2000;
+		else if (uj == 2) joyraw |= 0x1000;
+	}
+	// [MiSTer-DB9 END]
+
 	// OPTIMIZATION 2: Detect changes using XOR.
 	// We mask with 0xFFF because we only care about the first 12 bits.
 	uint16_t changes = (joyraw ^ joyraw_bits) & 0x0FFF;

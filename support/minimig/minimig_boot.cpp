@@ -423,6 +423,9 @@ void BootInit()
 
 	minimig_config.kickstart[0] = 0;
 	minimig_cfg_load(0);
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO on core launch
+	minimig_auto_db9();
+	// [MiSTer-DB9 END]
 }
 
 void BootPrintEx(const char * str)
