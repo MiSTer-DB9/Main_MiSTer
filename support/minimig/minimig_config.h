@@ -83,4 +83,8 @@ void minimig_ConfigAutofire(unsigned char autofire, unsigned char mask);
 void minimig_set_extcfg(unsigned int ext_cfg);
 unsigned int minimig_get_extcfg();
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+void minimig_auto_db9();
+// [MiSTer-DB9 END]
+
 #endif

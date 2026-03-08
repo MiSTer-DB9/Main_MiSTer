@@ -741,5 +741,38 @@ void minimig_set_extcfg(unsigned int ext_cfg)
 
 unsigned int minimig_get_extcfg()
 {
-	return (minimig_config.ext_cfg2 << 16) | minimig_config.ext_cfg;
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+	return ((unsigned int)minimig_config.ext_cfg2 << 16) | minimig_config.ext_cfg;
+	// [MiSTer-DB9 END]
 }
+
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO on core launch
+void minimig_auto_db9()
+{
+	// Already set by user to a valid mode, don't override
+	unsigned int cur_val = (minimig_get_extcfg() >> 30) & 3;
+	if (cur_val == 1 || cur_val == 2) return;
+
+	FILE *f = fopen("/tmp/db9_detected", "r");
+	if (!f) return;
+	snac_detected = true;
+
+	char type[8] = {};
+	if (!fgets(type, sizeof(type), f)) { fclose(f); return; }
+	fclose(f);
+
+	// Trim trailing whitespace/newline
+	char *end = type + strlen(type) - 1;
+	while (end > type && (*end == '\n' || *end == '\r' || *end == ' ')) *end-- = 0;
+
+	unsigned int val = 0;
+	if (strcmp(type, "DB9") == 0) val = 1;       // DB9MD
+	else if (strcmp(type, "DB15") == 0) val = 2;  // DB15
+
+	if (val)
+	{
+		minimig_set_extcfg((minimig_get_extcfg() & ~0xC0000000u) | (val << 30));
+		printf("Auto-enabling %s for Minimig UserIO\n", type);
+	}
+}
+// [MiSTer-DB9 END]

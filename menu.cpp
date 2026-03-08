@@ -4851,7 +4851,9 @@ void HandleUI(void)
 		{
 			parentstate = menustate;
 			OsdSetTitle("MT32-pi");
-			menumask = 0x7F;
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+			menumask = 0xFF; // extended for MT32-pi Port option
+			// [MiSTer-DB9 END]
 			uint32_t mt32_cfg = is_minimig() ? minimig_get_extcfg() : tos_get_extctrl();
 
 			m = 0;
@@ -4946,11 +4948,23 @@ void HandleUI(void)
 			}
 			OsdWrite(m++, s);
 
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+			int has_mt32port = is_minimig() ? (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 0x40) : 0;
+			if (has_mt32port) {
+				OsdWrite(m++);
+				strcpy(s, " MT32-pi Port:   ");
+				strcat(s, (mt32_cfg & 0x10000000u) ? "USER_IO" : "USER_IO2");
+				OsdWrite(m++, s, menusub == 5, 0);
+			} else {
+				menumask &= ~(1 << 5);
+			}
+			// [MiSTer-DB9 END]
+
 			OsdWrite(m++);
-			OsdWrite(m++, " Reset Hanging Notes", menusub == 5);
+			OsdWrite(m++, " Reset Hanging Notes", menusub == 6);
 
 			while (m < 15) OsdWrite(m++);
-			OsdWrite(15, STD_BACK, menusub == 6, 0);
+			OsdWrite(15, STD_BACK, menusub == 7, 0);
 
 			menustate = MENU_MT32PI_MAIN2;
 		}
@@ -4958,7 +4972,7 @@ void HandleUI(void)
 
 
 	case MENU_MT32PI_MAIN2:
-		if (menu || back || left || (select && menusub == 6))
+		if (menu || back || left || (select && menusub == 7))
 		{
 			if (is_minimig())
 			{
@@ -5017,7 +5031,14 @@ void HandleUI(void)
 				menustate = MENU_MT32PI_MAIN1;
 				break;
 
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 			case 5:
+				if (is_minimig()) mt32_cfg ^= 0x10000000u;
+				menustate = MENU_MT32PI_MAIN1;
+				break;
+			// [MiSTer-DB9 END]
+
+			case 6:
 				if (select)
 				{
 					if (is_minimig()) minimig_set_extcfg(mt32_cfg | 1);
@@ -5886,7 +5907,9 @@ void HandleUI(void)
 
 	case MENU_MINIMIG_CHIPSET1:
 		helptext_idx = HELPTEXT_CHIPSET;
-		menumask = 0x3FF;
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+		menumask = 0x1FFF; // extended from 0x3FF for DB9/SNAC8 items (bits 0-12)
+		// [MiSTer-DB9 END]
 		OsdSetTitle("System");
 		parentstate = menustate;
 
@@ -5917,7 +5940,22 @@ void HandleUI(void)
 		strcat(s, config_joystick_mode[(minimig_config.autofire & 6) >> 1]);
 		OsdWrite(m++, s, menusub == 6, 0);
 
-		OsdWrite(m++, "", 0, 0);
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players
+		{
+			static const char *config_userio_joy_msg[] = { "Off", "DB9MD", "DB15" };
+			int uj = (minimig_get_extcfg() >> 30) & 3;
+			if (uj > 2) uj = 0;
+			strcpy(s, " UIO Joy  : ");
+			strcat(s, config_userio_joy_msg[uj]);
+			OsdWrite(m++, s, menusub == 7, 0);
+			strcpy(s, " UIO Ply  : ");
+			strcat(s, (minimig_get_extcfg() & 0x20000000u) ? "2 Players" : "1 Player");
+			OsdWrite(m++, s, menusub == 8, !uj);
+			menumask &= ~(1 << 9);
+			OsdWrite(m++, "", 0, 0);
+		}
+		// [MiSTer-DB9 END]
+
 		strcpy(s, " ROM    : ");
 		{
 			char *path = HomeDir();
@@ -5927,13 +5965,19 @@ void HandleUI(void)
 			strncat(&s[3], name, 24);
 		}
 
-		OsdWrite(m++, s, menusub == 7, 0);
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+		OsdWrite(m++, s, menusub == 10, 0);
+		// [MiSTer-DB9 END]
 		strcpy(s, " HRTmon : ");
 		strcat(s, (minimig_config.memory & 0x40) ? "enabled " : "disabled");
-		OsdWrite(m++, s, menusub == 8, 0);
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+		OsdWrite(m++, s, menusub == 11, 0);
+		// [MiSTer-DB9 END]
 
 		for (int i = m; i < OsdGetSize() - 1; i++) OsdWrite(i, "", 0, 0);
-		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 9, 0);
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 12, 0);
+		// [MiSTer-DB9 END]
 
 		menustate = MENU_MINIMIG_CHIPSET2;
 		break;
@@ -6053,17 +6097,38 @@ void HandleUI(void)
 				menustate = MENU_MINIMIG_CHIPSET1;
 				minimig_ConfigAutofire(minimig_config.autofire, 6);
 			}
-			else if (menusub == 7 && select)
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players handlers
+			else if (menusub == 7)
+			{
+				int uio_joy = (minimig_get_extcfg() >> 30) & 3;
+				if (minus) uio_joy = uio_joy ? uio_joy - 1 : 2;
+				else uio_joy = (uio_joy >= 2) ? 0 : uio_joy + 1;
+				minimig_set_extcfg((minimig_get_extcfg() & ~0xC0000000u) | ((uint32_t)uio_joy << 30));
+				menustate = MENU_MINIMIG_CHIPSET1;
+			}
+			else if (menusub == 8 && ((minimig_get_extcfg() >> 30) & 3))
+			{
+				minimig_set_extcfg(minimig_get_extcfg() ^ 0x20000000u);
+				menustate = MENU_MINIMIG_CHIPSET1;
+			}
+			// [MiSTer-DB9 END]
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+			else if (menusub == 10 && select)
+			// [MiSTer-DB9 END]
 			{
 				ioctl_index = 1;
 				SelectFile(Selected_F[4], "ROM", SCANO_DIR, MENU_MINIMIG_ROMFILE_SELECTED, MENU_MINIMIG_CHIPSET1);
 			}
-			else if (menusub == 8)
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+			else if (menusub == 11)
+			// [MiSTer-DB9 END]
 			{
 				minimig_config.memory ^= 0x40;
 				menustate = MENU_MINIMIG_CHIPSET1;
 			}
-			else if (menusub == 9)
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+			else if (menusub == 12)
+			// [MiSTer-DB9 END]
 			{
 				menustate = MENU_MINIMIG_MAIN1;
 				menusub = 6;
