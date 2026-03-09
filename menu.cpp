@@ -4473,7 +4473,9 @@ void HandleUI(void)
 		break;
 
 	case MENU_ST_SYSTEM1:
-		menumask = 0x1fffb;
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: extended for UserIO Joystick (bit 16) and Players (bit 17)
+		menumask = 0x7fffb;
+		// [MiSTer-DB9 END]
 		OsdSetTitle("Config", 0);
 		helptext_idx = 0;
 
@@ -4554,7 +4556,22 @@ void HandleUI(void)
 			MenuWrite(m++, s, menusub == 15);
 			MenuWrite(m++);
 
-			MenuWrite(m++, STD_BACK, menusub == 16);
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players options
+			{
+				static const char *config_userio_joy_msg[] = { "Off", "DB9MD", "DB15" };
+				int uj = (tos_get_extctrl() >> 30) & 3;
+				if (uj > 2) uj = 0;
+				strcpy(s, " UserIO Joy: ");
+				strcat(s, config_userio_joy_msg[uj]);
+				MenuWrite(m++, s, menusub == 16);
+				strcpy(s, " UserIO Ply: ");
+				strcat(s, (tos_get_extctrl() & 0x20000000u) ? "2 Players" : "1 Player");
+				MenuWrite(m++, s, menusub == 17, !uj);
+			}
+			// [MiSTer-DB9 END]
+			MenuWrite(m++);
+
+			MenuWrite(m++, STD_BACK, menusub == 18);
 
 			if (!adjvisible) break;
 			firstmenu += adjvisible;
@@ -4704,8 +4721,28 @@ void HandleUI(void)
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players handlers
 			case 16:
+				{
+					int uio_joy = (tos_get_extctrl() >> 30) & 3;
+					if (uio_joy > 2) uio_joy = 0;
+					if (minus) uio_joy = uio_joy ? uio_joy - 1 : 2;
+					else uio_joy = (uio_joy >= 2) ? 0 : uio_joy + 1;
+					tos_set_extctrl((tos_get_extctrl() & ~0xC0000000u) | ((uint32_t)uio_joy << 30));
+					menustate = MENU_ST_SYSTEM1;
+				}
+				break;
+
+			case 17:
+				if ((tos_get_extctrl() >> 30) & 3)
+				{
+					tos_set_extctrl(tos_get_extctrl() ^ 0x20000000u);
+					menustate = MENU_ST_SYSTEM1;
+				}
+				break;
+			// [MiSTer-DB9 END]
+
+			case 18:
 				menustate = MENU_ST_MAIN1;
 				menusub = 5;
 				if (need_reset)

@@ -685,3 +685,16 @@ const char* tos_get_cfg_string(int num)
 
 	return "< empty slot >";
 }
+
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO on core launch
+void tos_auto_db9()
+{
+	unsigned int cur_val = (tos_get_extctrl() >> 30) & 3;
+	unsigned int val = user_io_read_db9_detected(cur_val);
+	if (val)
+	{
+		tos_set_extctrl((tos_get_extctrl() & ~0xC0000000u) | (val << 30));
+		printf("Auto-enabling %s for AtariST UserIO\n", val == 1 ? "DB9" : "DB15");
+	}
+}
+// [MiSTer-DB9 END]

@@ -267,6 +267,11 @@ int user_io_use_cheats();
 // Used as a guard so input_cb avoids a remove() syscall when the file doesn't exist.
 extern bool snac_detected;
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: shared detection helper for ext_cfg-style cores
+// Returns 1=DB9MD, 2=DB15, 0=not detected or cur_val already set (1 or 2).
+int user_io_read_db9_detected(unsigned int cur_val);
+// [MiSTer-DB9 END]
+
 int process_ss(const char *rom_name, int enable = 1);
 
 void diskled_on();

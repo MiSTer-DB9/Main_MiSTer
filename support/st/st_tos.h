@@ -102,4 +102,8 @@ void tos_set_ar(int ar);
 uint32_t tos_get_extctrl();
 void tos_set_extctrl(uint32_t ext_ctrl);
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+void tos_auto_db9();
+// [MiSTer-DB9 END]
+
 #endif

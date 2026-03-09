@@ -1340,6 +1340,33 @@ int user_io_get_width()
 
 bool snac_detected = false;
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: shared detection helper for ext_cfg-style cores
+// Reads /tmp/db9_detected and returns 1=DB9MD, 2=DB15, 0=not detected or already set.
+// cur_val: current value of (extcfg >> 30) & 3 — if already 1 or 2, returns 0 (no override).
+int user_io_read_db9_detected(unsigned int cur_val)
+{
+	if (cur_val == 1 || cur_val == 2) return 0; // already set by user, don't override
+
+	FILE *f = fopen("/tmp/db9_detected", "r");
+	if (!f) return 0;
+	snac_detected = true;
+
+	char type[8] = {};
+	if (!fgets(type, sizeof(type), f)) { fclose(f); return 0; }
+	fclose(f);
+
+	// Trim trailing whitespace/newline safely
+	int len = strlen(type);
+	while (len > 0 && (type[len - 1] == '\n' || type[len - 1] == '\r' || type[len - 1] == ' ')) {
+		type[--len] = 0;
+	}
+
+	if (strcmp(type, "DB9") == 0) return 1;
+	if (strcmp(type, "DB15") == 0) return 2;
+	return 0;
+}
+// [MiSTer-DB9 END]
+
 static void user_io_auto_db9()
 {
 	FILE *f = fopen("/tmp/db9_detected", "r");
@@ -1552,6 +1579,9 @@ void user_io_init(const char *path, const char *xml)
 			if (is_st())
 			{
 				tos_config_load(0);
+				// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO on core launch
+				tos_auto_db9();
+				// [MiSTer-DB9 END]
 				tos_upload(NULL);
 			}
 			else if (is_menu())
@@ -2590,6 +2620,12 @@ static void user_io_joyraw_check_change()
 	if (is_minimig())
 	{
 		uint16_t uj = (minimig_get_extcfg() >> 30) & 3;
+		if (uj == 1) joyraw |= 0x2000;
+		else if (uj == 2) joyraw |= 0x1000;
+	}
+	else if (is_st())
+	{
+		uint16_t uj = (tos_get_extctrl() >> 30) & 3;
 		if (uj == 1) joyraw |= 0x2000;
 		else if (uj == 2) joyraw |= 0x1000;
 	}
