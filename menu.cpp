@@ -4986,7 +4986,7 @@ void HandleUI(void)
 			OsdWrite(m++, s);
 
 			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-			int has_mt32port = is_minimig() ? (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 0x40) : 0;
+			int has_mt32port = (is_minimig() || is_st()) ? (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 0x40) : 0;
 			if (has_mt32port) {
 				OsdWrite(m++);
 				strcpy(s, " MT32-pi Port:   ");
@@ -5070,7 +5070,7 @@ void HandleUI(void)
 
 			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 			case 5:
-				if (is_minimig()) mt32_cfg ^= 0x10000000u;
+				if (is_minimig() || is_st()) mt32_cfg ^= 0x10000000u;
 				menustate = MENU_MT32PI_MAIN1;
 				break;
 			// [MiSTer-DB9 END]
