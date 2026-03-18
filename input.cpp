@@ -2578,15 +2578,16 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 	if (ev->type != EV_KEY && ev->type != EV_ABS && ev->type != EV_REL) return;
 	if (ev->type == EV_KEY && (!ev->code || ev->code == KEY_UNKNOWN)) return;
 
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 	// Non-DB9/DB15 input: clear detection so auto-enable only fires
 	// when the core is actually launched via DB9/DB15.
-	// Guard with snac_detected to avoid a remove() syscall on every keypress
-	// when no DB9/DB15 controller is in use.
-	if (ev->type == EV_KEY && ev->value && snac_detected)
+	// Uses shm (plain memory write) instead of remove() to avoid blocking
+	// filesystem syscalls in the input hot path.
+	if (ev->type == EV_KEY && ev->value)
 	{
-		remove("/tmp/db9_detected");
-		snac_detected = false;
+		db9_shm_clear();
 	}
+	// [MiSTer-DB9 END]
 
 	static uint16_t last_axis = 0;
 

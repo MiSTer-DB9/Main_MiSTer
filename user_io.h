@@ -263,11 +263,13 @@ char * GetMidiLinkSoundfont();
 void user_io_store_filename(char *filename);
 int user_io_use_cheats();
 
-// Set when a DB9/DB15 controller is detected, cleared on keyboard/USB input.
-// Used as a guard so input_cb avoids a remove() syscall when the file doesn't exist.
-extern bool snac_detected;
-
-// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: shared detection helper for ext_cfg-style cores
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: shared memory for DB9/DB15 detection
+// Uses POSIX shm instead of /tmp file to avoid blocking syscalls in the input hot path.
+// The shm segment persists across process restarts (survives until reboot or shm_unlink).
+void db9_shm_init();                          // map (or create) the shm segment
+void db9_shm_write(const char *type);         // write "DB9" or "DB15"
+void db9_shm_clear();                         // clear detection (on keyboard/USB input)
+const char *db9_shm_read();                   // read current value (NULL if empty)
 // Returns 1=DB9MD, 2=DB15, 0=not detected or cur_val already set (1 or 2).
 int user_io_read_db9_detected(unsigned int cur_val);
 // [MiSTer-DB9 END]
