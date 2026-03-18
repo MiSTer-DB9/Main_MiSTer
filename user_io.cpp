@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/mman.h>
 
 #include "lib/imlib2/Imlib2.h"
 
@@ -1338,28 +1339,52 @@ int user_io_get_width()
 	return fio_size;
 }
 
-bool snac_detected = false;
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: POSIX shm for DB9/DB15 detection state
+// Replaces /tmp/db9_detected file to avoid blocking filesystem syscalls in the
+// input callback and polling loop hot paths. All read/write/clear operations
+// are plain memory accesses after the initial mmap.
+#define DB9_SHM_NAME "/mister_db9_detected"
+#define DB9_SHM_SIZE 8
 
-// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: shared detection helper for ext_cfg-style cores
-// Reads /tmp/db9_detected and returns 1=DB9MD, 2=DB15, 0=not detected or already set.
-// cur_val: current value of (extcfg >> 30) & 3 — if already 1 or 2, returns 0 (no override).
+static char *db9_shm_ptr = NULL;
+
+void db9_shm_init()
+{
+	if (db9_shm_ptr) return; // already mapped, reuse across core loads
+	int fd = shm_open(DB9_SHM_NAME, O_CREAT | O_RDWR, 0644);
+	if (fd < 0) return;
+	ftruncate(fd, DB9_SHM_SIZE);
+	db9_shm_ptr = (char *)mmap(NULL, DB9_SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	close(fd);
+	if (db9_shm_ptr == MAP_FAILED) db9_shm_ptr = NULL;
+}
+
+void db9_shm_write(const char *type)
+{
+	if (!db9_shm_ptr || !type) return;
+	memset(db9_shm_ptr, 0, DB9_SHM_SIZE);
+	strncpy(db9_shm_ptr, type, DB9_SHM_SIZE - 1);
+}
+
+void db9_shm_clear()
+{
+	if (!db9_shm_ptr || !db9_shm_ptr[0]) return; // skip if already clear
+	memset(db9_shm_ptr, 0, DB9_SHM_SIZE);
+}
+
+const char *db9_shm_read()
+{
+	if (!db9_shm_ptr || !db9_shm_ptr[0]) return NULL;
+	return db9_shm_ptr;
+}
+
+// Returns 1=DB9MD, 2=DB15, 0=not detected or cur_val already set (1 or 2).
 int user_io_read_db9_detected(unsigned int cur_val)
 {
 	if (cur_val == 1 || cur_val == 2) return 0; // already set by user, don't override
 
-	FILE *f = fopen("/tmp/db9_detected", "r");
-	if (!f) return 0;
-	snac_detected = true;
-
-	char type[8] = {};
-	if (!fgets(type, sizeof(type), f)) { fclose(f); return 0; }
-	fclose(f);
-
-	// Trim trailing whitespace/newline safely
-	int len = strlen(type);
-	while (len > 0 && (type[len - 1] == '\n' || type[len - 1] == '\r' || type[len - 1] == ' ')) {
-		type[--len] = 0;
-	}
+	const char *type = db9_shm_read();
+	if (!type) return 0;
 
 	if (strcmp(type, "DB9") == 0) return 1;
 	if (strcmp(type, "DB15") == 0) return 2;
@@ -1369,17 +1394,8 @@ int user_io_read_db9_detected(unsigned int cur_val)
 
 static void user_io_auto_db9()
 {
-	FILE *f = fopen("/tmp/db9_detected", "r");
-	if (!f) return;
-	snac_detected = true;
-
-	char type[8] = {};
-	if (!fgets(type, sizeof(type), f)) { fclose(f); return; }
-	fclose(f);
-
-	// Trim trailing whitespace
-	char *end = type + strlen(type) - 1;
-	while (end > type && isspace((unsigned char)*end)) *end-- = 0;
+	const char *type = db9_shm_read();
+	if (!type) return;
 
 	for (int i = 2; ; i++)
 	{
@@ -1429,6 +1445,10 @@ void user_io_init(const char *path, const char *xml)
 	static char mainpath[512];
 	core_name[0] = 0;
 	disable_osd = 0;
+
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: init shared memory for detection
+	db9_shm_init();
+	// [MiSTer-DB9 END]
 
 	// Clean up old game ID when loading a new core
 	unlink("/tmp/GAMEID");
@@ -2616,54 +2636,37 @@ static void user_io_joyraw_check_change()
 	uint16_t joyraw = spi_w(0);
 	DisableIO();
 
-	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-	if (is_minimig())
-	{
-		uint16_t uj = (minimig_get_extcfg() >> 30) & 3;
-		if (uj == 1) joyraw |= 0x2000;
-		else if (uj == 2) joyraw |= 0x1000;
-	}
-	else if (is_st())
-	{
-		uint16_t uj = (tos_get_extctrl() >> 30) & 3;
-		if (uj == 1) joyraw |= 0x2000;
-		else if (uj == 2) joyraw |= 0x1000;
-	}
-	// [MiSTer-DB9 END]
-
 	// OPTIMIZATION 2: Detect changes using XOR.
-	// We mask with 0xFFF because we only care about the first 12 bits.
-	uint16_t changes = (joyraw ^ joyraw_bits) & 0x0FFF;
+	// We mask with 0x3FFF because we care about the first 14 bits (12 buttons + 2 type).
+	uint16_t changes = (joyraw ^ joyraw_bits) & 0x3FFF;
 
 	// If nothing changed, we are done. No loop, no branches.
 	if (changes == 0) {
 		return;
 	}
 
-	// Save DB9/DB15 detection state on button activity.
-	// Only re-written when the type changes or the file was cleared by USB/keyboard input.
-	// Works in any core (not just the menu) so the file stays current even when
-	// navigating from a game core into another core without passing through the menu.
-	static const char *last_type = NULL;
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+	// Save DB9/DB15 detection state on physical button activity.
+	// Only written when the type changes or shm was cleared by USB/keyboard input.
+	// Type bits come from the FPGA hardware (bits 12-13), not from menu settings,
+	// so detection only fires when a physical controller is connected.
+	static const char *last_shm_type = NULL;
 	const char *type = NULL;
 	if (joyraw & 0x2000) type = "DB9";        // DB9 (bit 13)
 	else if (joyraw & 0x1000) type = "DB15";  // DB15 (bit 12)
 
-	if (type && (!snac_detected || type != last_type))
+	const char *cur_shm = db9_shm_read();
+	if (type && (!cur_shm || type != last_shm_type))
 	{
-		FILE *f = fopen("/tmp/db9_detected", "w");
-		if (f)
-		{
-			fprintf(f, "%s", type);
-			fclose(f);
-			snac_detected = true;
-			last_type = type;
-		}
+		db9_shm_write(type);
+		last_shm_type = type;
 	}
+	// [MiSTer-DB9 END]
 
-	// OPTIMIZATION 3: Iterate only over changed bits.
+	// OPTIMIZATION 3: Iterate only over changed button bits (0-11).
 	// This turns the O(12) loop into O(N), where N is the number of buttons changing.
 	// Usually N=1 or N=0.
+	changes &= 0x0FFF; // mask to button bits only, exclude type bits 12-13
 	while (changes) {
 		// __builtin_ctz finds the index of the first set bit (0-15) instantly
 		int i = __builtin_ctz(changes);
