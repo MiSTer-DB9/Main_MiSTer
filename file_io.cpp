@@ -461,7 +461,19 @@ int FileOpenEx(fileTYPE *file, const char *name, int mode, char mute, int use_zi
 			if(!mute) printf("FileOpenEx(open) File:%s, error: %s.\n", full_path, strerror(errno));
 			return 0;
 		}
-		const char *fmode = mode & O_RDWR ? "w+" : "r";
+		const char *fmode;
+
+		switch (mode & O_ACCMODE) {
+		case O_RDONLY:
+			fmode = "r";
+			break;
+		case O_WRONLY:
+			fmode = "w";
+			break;
+		default:
+			fmode = "w+";
+			break;
+		}
 		file->filp = fdopen(fd, fmode);
 		if (!file->filp)
 		{
@@ -833,11 +845,14 @@ int FileCreatePath(const char *dir)
 	return res;
 }
 
-void FileGenerateScreenshotName(const char *name, char *out_name, int buflen)
+void FileGenerateScreenshotName(const char *name, char *out_name, const char* extension, int buflen)
 {
-	// If the name ends with .png then don't modify it
-	if( !strcasecmp(name + strlen(name) - 4, ".png") )
-	{
+	// If the name ends with target extension then don't modify it
+	       
+	size_t name_len = strlen(name);
+	size_t ext_len = strlen(extension);
+	
+	if (name_len >= ext_len && !strcasecmp(name + name_len - ext_len, extension))	{
 		const char *p = strrchr(name, '/');
 		make_fullpath(SCREENSHOT_DIR);
 		if( p )
@@ -859,13 +874,13 @@ void FileGenerateScreenshotName(const char *name, char *out_name, int buflen)
 		if (tm.tm_year >= 119) // 2019 or up considered valid time
 		{
 			strftime(datecode, 31, "%Y%m%d_%H%M%S", &tm);
-			snprintf(out_name, buflen, "%s/%s/%s-%s.png", SCREENSHOT_DIR, CoreName2, datecode, name[0] ? name : SCREENSHOT_DEFAULT);
+			snprintf(out_name, buflen, "%s/%s/%s-%s%s", SCREENSHOT_DIR, CoreName2, datecode, name[0] ? name : SCREENSHOT_DEFAULT, extension);
 		}
 		else
 		{
 			for (int i = 1; i < 10000; i++)
 			{
-				snprintf(out_name, buflen, "%s/%s/NODATE-%s_%04d.png", SCREENSHOT_DIR, CoreName2, name[0] ? name : SCREENSHOT_DEFAULT, i);
+				snprintf(out_name, buflen, "%s/%s/NODATE-%s_%04d%s", SCREENSHOT_DIR, CoreName2, name[0] ? name : SCREENSHOT_DEFAULT, i, extension);
 				if (!getFileType(out_name)) return;
 			}
 		}
@@ -1789,96 +1804,55 @@ int ScanDirectory(char* path, int mode, const char *extension, int options, cons
 		}
 		else if (mode == SCANF_NEXT_PAGE)
 		{
-			// Calculate cursor position relative to current page
-			int cursor_offset = iSelectedEntry - iFirstEntry;
-			
-			// Check if we're already on the last page (less than a full page left)
-			int remaining_entries = flist_nDirEntries() - iFirstEntry;
-			if (remaining_entries <= OsdGetSize())
+			int last_visible = iFirstEntry + OsdGetSize() - 1;
+			if (last_visible >= flist_nDirEntries()) last_visible = flist_nDirEntries() - 1;
+			int page_stop = iFirstEntry + OsdGetSize() - (cfg.lookahead + 1);
+			if (page_stop > last_visible) page_stop = last_visible;
+			if (page_stop < iFirstEntry) page_stop = iFirstEntry;
+
+			if (iSelectedEntry < page_stop)
 			{
-				// On last page - allow cursor to go to actual last row
-				iSelectedEntry = flist_nDirEntries() - 1;
-				iFirstEntry = flist_nDirEntries() - OsdGetSize();
-				if (iFirstEntry < 0) iFirstEntry = 0;
+				iSelectedEntry = page_stop;
 			}
 			else
 			{
-				// Move to next page
 				iFirstEntry += OsdGetSize();
 				if (iFirstEntry >= flist_nDirEntries())
 				{
-					// At end, stay on last page
 					iFirstEntry = flist_nDirEntries() - OsdGetSize();
 					if (iFirstEntry < 0) iFirstEntry = 0;
-					iSelectedEntry = flist_nDirEntries() - 1;
 				}
-				else
-				{
-					// Special handling for top row - jump to cfg.lookahead positions from bottom
-					if (cursor_offset == 0)
-					{
-						iSelectedEntry = iFirstEntry + OsdGetSize() - (cfg.lookahead + 1);
-					}
-					else
-					{
-						// Maintain relative cursor position, but respect cfg.lookahead buffer from bottom
-						iSelectedEntry = iFirstEntry + cursor_offset;
-						
-						// If cursor would be on bottom cfg.lookahead rows of page, keep it at cfg.lookahead from bottom
-						if (cursor_offset >= OsdGetSize() - cfg.lookahead)
-						{
-							iSelectedEntry = iFirstEntry + OsdGetSize() - (cfg.lookahead + 1);
-						}
-					}
-					
-					// Ensure we don't go past the end
-					if (iSelectedEntry >= flist_nDirEntries())
-					{
-						iSelectedEntry = flist_nDirEntries() - 1;
-					}
-				}
+				iSelectedEntry = iFirstEntry + OsdGetSize() - (cfg.lookahead + 1);
+				if (iSelectedEntry < iFirstEntry) iSelectedEntry = iFirstEntry;
+				if (iSelectedEntry >= flist_nDirEntries()) iSelectedEntry = flist_nDirEntries() - 1;
 			}
 			return 0;
 		}
 		else if (mode == SCANF_PREV_PAGE)
 		{
-			// Calculate cursor position relative to current page
-			int cursor_offset = iSelectedEntry - iFirstEntry;
-			
-			// Check if we're already on the first page (less than a full page to go back)
-			if (iFirstEntry <= OsdGetSize())
+			int last_visible = iFirstEntry + OsdGetSize() - 1;
+			if (last_visible >= flist_nDirEntries()) last_visible = flist_nDirEntries() - 1;
+			int page_stop = iFirstEntry + cfg.lookahead;
+			if (page_stop > last_visible) page_stop = last_visible;
+
+			if (iSelectedEntry > page_stop)
 			{
-				// On first page - allow cursor to go to actual first row
-				iSelectedEntry = 0;
-				iFirstEntry = 0;
+				iSelectedEntry = page_stop;
 			}
 			else
 			{
-				// Move to previous page
-				iFirstEntry -= OsdGetSize();
-				if (iFirstEntry < 0) iFirstEntry = 0;
-				
-				// Special handling for bottom row - jump to cfg.lookahead from top
-				if (cursor_offset == OsdGetSize() - 1)
+				if (iFirstEntry > 0)
 				{
+					iFirstEntry -= OsdGetSize();
+					if (iFirstEntry < 0) iFirstEntry = 0;
 					iSelectedEntry = iFirstEntry + cfg.lookahead;
+					last_visible = iFirstEntry + OsdGetSize() - 1;
+					if (last_visible >= flist_nDirEntries()) last_visible = flist_nDirEntries() - 1;
+					if (iSelectedEntry > last_visible) iSelectedEntry = last_visible;
 				}
 				else
 				{
-					// Maintain relative cursor position, but respect cfg.lookahead buffer from top
-					iSelectedEntry = iFirstEntry + cursor_offset;
-					
-					// If cursor would be on top cfg.lookahead rows of page, keep it at cfg.lookahead from top
-					if (cursor_offset <= cfg.lookahead - 1)
-					{
-						iSelectedEntry = iFirstEntry + cfg.lookahead;
-					}
-				}
-				
-				// Ensure we don't go past the end
-				if (iSelectedEntry >= flist_nDirEntries())
-				{
-					iSelectedEntry = flist_nDirEntries() - 1;
+					iSelectedEntry = 0;
 				}
 			}
 		}
