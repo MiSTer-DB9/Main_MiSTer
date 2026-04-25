@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/mman.h>
+#include <errno.h>
 
 #include "hardware.h"
 #include "osd.h"
@@ -1377,11 +1378,22 @@ void db9_shm_init()
 {
 	if (db9_shm_ptr) return; // already mapped, reuse across core loads
 	int fd = shm_open(DB9_SHM_NAME, O_CREAT | O_RDWR, 0644);
-	if (fd < 0) return;
-	ftruncate(fd, DB9_SHM_SIZE);
+	if (fd < 0)
+	{
+		printf("db9_shm_init: shm_open(%s) failed: %s\n", DB9_SHM_NAME, strerror(errno));
+		return;
+	}
+	if (ftruncate(fd, DB9_SHM_SIZE) < 0)
+	{
+		printf("db9_shm_init: ftruncate failed: %s\n", strerror(errno));
+	}
 	db9_shm_ptr = (char *)mmap(NULL, DB9_SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	close(fd);
-	if (db9_shm_ptr == MAP_FAILED) db9_shm_ptr = NULL;
+	if (db9_shm_ptr == MAP_FAILED)
+	{
+		printf("db9_shm_init: mmap failed: %s\n", strerror(errno));
+		db9_shm_ptr = NULL;
+	}
 }
 
 void db9_shm_write(const char *type)
