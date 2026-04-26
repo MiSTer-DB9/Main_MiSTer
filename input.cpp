@@ -1787,6 +1787,7 @@ static void uinp_send_key(uint16_t key, int press)
 	}
 }
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: route joy_raw button events to OSD/uinput
 void input_joyraw_kbd(uint16_t key, int press)
 {
 	if (video_fb_state())
@@ -1794,6 +1795,7 @@ void input_joyraw_kbd(uint16_t key, int press)
 	else
 		user_io_kbd(key, press);
 }
+// [MiSTer-DB9 END]
 
 static void uinp_check_key()
 {
