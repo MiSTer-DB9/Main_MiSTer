@@ -9,12 +9,17 @@
 #include <ctype.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: POSIX shm + errno for db9_shm_*
 #include <sys/mman.h>
 #include <errno.h>
+// [MiSTer-DB9 END]
 
 #include "hardware.h"
 #include "osd.h"
 #include "user_io.h"
+// [MiSTer-DB9-Pro BEGIN] - Saturn key gate
+#include "db9_key.h"
+// [MiSTer-DB9-Pro END]
 #include "debug.h"
 #include "spi.h"
 #include "cfg.h"
@@ -1399,6 +1404,9 @@ void db9_shm_init()
 void db9_shm_write(const char *type)
 {
 	if (!db9_shm_ptr || !type) return;
+	// [MiSTer-DB9-Pro BEGIN] - gate: never advertise Saturn while locked
+	if (!db9_key_saturn_unlocked() && !strcmp(type, "Saturn")) return;
+	// [MiSTer-DB9-Pro END]
 	memset(db9_shm_ptr, 0, DB9_SHM_SIZE);
 	strncpy(db9_shm_ptr, type, DB9_SHM_SIZE - 1);
 }
@@ -1415,20 +1423,32 @@ const char *db9_shm_read()
 	return db9_shm_ptr;
 }
 
-// Returns 1=DB9MD, 2=DB15, 0=not detected or cur_val already set (1 or 2).
+// Returns 1=Saturn, 2=DB9MD, 3=DB15, 0=not detected or cur_val already set.
 int user_io_read_db9_detected(unsigned int cur_val)
 {
-	if (cur_val == 1 || cur_val == 2) return 0; // already set by user, don't override
+	if (cur_val >= 1 && cur_val <= 3) return 0; // already set by user, don't override
 
 	const char *type = db9_shm_read();
 	if (!type) return 0;
 
-	if (strcmp(type, "DB9") == 0) return 1;
-	if (strcmp(type, "DB15") == 0) return 2;
+	if (strcmp(type, "Saturn") == 0) return 1;
+	if (strcmp(type, "DB9") == 0) return 2;
+	if (strcmp(type, "DB15") == 0) return 3;
 	return 0;
+}
+
+// Maps joy_type to wire-format string for SHM/log use. NULL for 0/Off.
+// Returns "DB9" not "DB9MD" by design: user_io_auto_db9() strstr-matches
+// this against CONF_STR labels, and "DB9" is a substring of both legacy
+// "DB9" and current "DB9MD" entries. Renaming would break legacy cores.
+const char *db9_type_name(int val)
+{
+	static const char *const names[4] = { NULL, "Saturn", "DB9", "DB15" };
+	return (val >= 0 && val < 4) ? names[val] : NULL;
 }
 // [MiSTer-DB9 END]
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-select UserIO Joystick from detection shm
 static void user_io_auto_db9()
 {
 	const char *type = db9_shm_read();
@@ -1475,6 +1495,7 @@ static void user_io_auto_db9()
 		break;
 	}
 }
+// [MiSTer-DB9 END]
 
 void user_io_init(const char *path, const char *xml)
 {
@@ -1486,6 +1507,10 @@ void user_io_init(const char *path, const char *xml)
 	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: init shared memory for detection
 	db9_shm_init();
 	// [MiSTer-DB9 END]
+	// [MiSTer-DB9-Pro BEGIN] - Saturn key gate (out-of-band SPI command, not status[])
+	db9_key_refresh();
+	spi_uio_cmd8(UIO_DB9_KEY, db9_key_saturn_unlocked() ? 1 : 0);
+	// [MiSTer-DB9-Pro END]
 
 	// Clean up old game ID when loading a new core
 	unlink("/tmp/GAMEID");
@@ -1628,7 +1653,9 @@ void user_io_init(const char *path, const char *xml)
 					memset(cur_status, 0, sizeof(cur_status));
 				}
 
+				// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO from detection shm
 				if (!is_menu()) user_io_auto_db9();
+				// [MiSTer-DB9 END]
 				user_io_status_set("[0]", 1);
 			}
 
@@ -2654,9 +2681,10 @@ int user_io_use_cheats()
 	return use_cheats;
 }
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: poll joy_raw ('h0f) for OSD/menu nav + detection
 static void user_io_joyraw_check_change()
 {
-	static const uint8_t joyraw_mapping[12] = {
+	static const uint8_t joyraw_mapping[14] = {
 		KEY_RIGHT,      // 0    R
 		KEY_LEFT,       // 1    L
 		KEY_DOWN,       // 2    D
@@ -2668,13 +2696,14 @@ static void user_io_joyraw_check_change()
 		KEY_RESERVED,   // 8    Y
 		KEY_RESERVED,   // 9    Z
 		KEY_RESERVED,   // 10   S
-		KEY_GRAVE       // 11   M
+		KEY_GRAVE,      // 11   M (DB9MD Mode button / OSD toggle)
+		KEY_RESERVED,   // 12   L_trigger (Saturn only)
+		KEY_GRAVE       // 13   R_trigger (Saturn only / OSD toggle)
 	};
 	static uint16_t joyraw_bits = 0;
 	static uint32_t joyraw_timer = 0;
 
-	// OPTIMIZATION 1: Only poll SPI on a fixed time interval (~20Hz).
-	// Uses a timer instead of a counter so the rate is independent of main loop speed.
+	// Poll SPI on a fixed time interval (~20Hz), independent of main loop speed.
 	if (joyraw_timer && !CheckTimer(joyraw_timer)) return;
 	joyraw_timer = GetTimer(50);
 
@@ -2682,9 +2711,8 @@ static void user_io_joyraw_check_change()
 	uint16_t joyraw = spi_w(0);
 	DisableIO();
 
-	// OPTIMIZATION 2: Detect changes using XOR.
-	// We mask with 0x3FFF because we care about the first 14 bits (12 buttons + 2 type).
-	uint16_t changes = (joyraw ^ joyraw_bits) & 0x3FFF;
+	// XOR detects changes across all 16 bits (14 buttons at [13:0] + 2 type at [15:14]).
+	uint16_t changes = (joyraw ^ joyraw_bits) & 0xFFFF;
 
 	// If nothing changed, we are done. No loop, no branches.
 	if (changes == 0) {
@@ -2694,12 +2722,11 @@ static void user_io_joyraw_check_change()
 	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 	// Save DB9/DB15 detection state on physical button activity.
 	// Only written when the type changes or shm was cleared by USB/keyboard input.
-	// Type bits come from the FPGA hardware (bits 12-13), not from menu settings,
+	// Type bits come from the FPGA hardware (bits 15-14), not from menu settings,
 	// so detection only fires when a physical controller is connected.
+	// Pointer-equality on `type` is safe: db9_type_name returns stable literals.
 	static const char *last_shm_type = NULL;
-	const char *type = NULL;
-	if (joyraw & 0x2000) type = "DB9";        // DB9 (bit 13)
-	else if (joyraw & 0x1000) type = "DB15";  // DB15 (bit 12)
+	const char *type = db9_type_name((joyraw >> 14) & 3);
 
 	const char *cur_shm = db9_shm_read();
 	if (type && (!cur_shm || type != last_shm_type))
@@ -2709,12 +2736,9 @@ static void user_io_joyraw_check_change()
 	}
 	// [MiSTer-DB9 END]
 
-	// OPTIMIZATION 3: Iterate only over changed button bits (0-11).
-	// This turns the O(12) loop into O(N), where N is the number of buttons changing.
-	// Usually N=1 or N=0.
-	changes &= 0x0FFF; // mask to button bits only, exclude type bits 12-13
+	// Iterate only over changed button bits (0-13) via ctz; usually 0 or 1 iterations.
+	changes &= 0x3FFF; // mask to button bits only, exclude type bits 15-14
 	while (changes) {
-		// __builtin_ctz finds the index of the first set bit (0-15) instantly
 		int i = __builtin_ctz(changes);
 
 		// Determine if this was a Press (1) or Release (0)
@@ -2730,6 +2754,7 @@ static void user_io_joyraw_check_change()
 	// Update history
 	joyraw_bits = joyraw;
 }
+// [MiSTer-DB9 END]
 
 static void check_status_change()
 {
@@ -3269,7 +3294,9 @@ void user_io_poll()
 	}
 
 	user_io_send_buttons(0);
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: poll joy_raw each user_io_poll tick
 	user_io_joyraw_check_change();
+	// [MiSTer-DB9 END]
 
 	if (is_minimig())
 	{

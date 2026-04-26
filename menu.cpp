@@ -396,6 +396,10 @@ static const char *home_dir = NULL;
 static char filter[256] = {};
 static unsigned long filter_typing_timer = 0;
 
+// [MiSTer-DB9-Pro BEGIN] - Saturn first after Off: order is load-bearing (see hazard notes)
+static const char *const config_userio_joy_msg[] = { "Off", "Saturn", "DB9MD", "DB15" };
+// [MiSTer-DB9-Pro END]
+
 // this function displays file selection menu
 void SelectFile(const char* path, const char* pFileExt, int Options, unsigned char MenuSelect, unsigned char MenuCancel)
 {
@@ -4763,9 +4767,7 @@ void HandleUI(void)
 
 			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players options
 			{
-				static const char *config_userio_joy_msg[] = { "Off", "DB9MD", "DB15" };
 				int uj = (tos_get_extctrl() >> 30) & 3;
-				if (uj > 2) uj = 0;
 				strcpy(s, " UserIO Joy: ");
 				strcat(s, config_userio_joy_msg[uj]);
 				MenuWrite(m++, s, menusub == 16);
@@ -4929,10 +4931,8 @@ void HandleUI(void)
 			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players handlers
 			case 16:
 				{
-					int uio_joy = (tos_get_extctrl() >> 30) & 3;
-					if (uio_joy > 2) uio_joy = 0;
-					if (minus) uio_joy = uio_joy ? uio_joy - 1 : 2;
-					else uio_joy = (uio_joy >= 2) ? 0 : uio_joy + 1;
+					// Saturn first after Off to prevent ghost inputs from MD select line
+					int uio_joy = (((tos_get_extctrl() >> 30) & 3) + (minus ? 3 : 1)) & 3;
 					tos_set_extctrl((tos_get_extctrl() & ~0xC0000000u) | ((uint32_t)uio_joy << 30));
 					menustate = MENU_ST_SYSTEM1;
 				}
@@ -6184,9 +6184,7 @@ void HandleUI(void)
 
 		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players
 		{
-			static const char *config_userio_joy_msg[] = { "Off", "DB9MD", "DB15" };
 			int uj = (minimig_get_extcfg() >> 30) & 3;
-			if (uj > 2) uj = 0;
 			strcpy(s, " UIO Joy  : ");
 			strcat(s, config_userio_joy_msg[uj]);
 			OsdWrite(m++, s, menusub == 7, 0);
@@ -6342,9 +6340,8 @@ void HandleUI(void)
 			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players handlers
 			else if (menusub == 7)
 			{
-				int uio_joy = (minimig_get_extcfg() >> 30) & 3;
-				if (minus) uio_joy = uio_joy ? uio_joy - 1 : 2;
-				else uio_joy = (uio_joy >= 2) ? 0 : uio_joy + 1;
+				// Saturn first after Off to prevent ghost inputs from MD select line
+				int uio_joy = (((minimig_get_extcfg() >> 30) & 3) + (minus ? 3 : 1)) & 3;
 				minimig_set_extcfg((minimig_get_extcfg() & ~0xC0000000u) | ((uint32_t)uio_joy << 30));
 				menustate = MENU_MINIMIG_CHIPSET1;
 			}

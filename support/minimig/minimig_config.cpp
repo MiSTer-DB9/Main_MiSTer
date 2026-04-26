@@ -754,7 +754,7 @@ void minimig_auto_db9()
 	if (val)
 	{
 		minimig_set_extcfg((minimig_get_extcfg() & ~0xC0000000u) | (val << 30));
-		printf("Auto-enabling %s for Minimig UserIO\n", val == 1 ? "DB9" : "DB15");
+		printf("Auto-enabling %s for Minimig UserIO\n", db9_type_name(val));
 	}
 }
 // [MiSTer-DB9 END]

@@ -101,6 +101,9 @@
 #define UIO_MM2_HDD     0xF8 //0x54
 #define UIO_MM2_JOY     0xF9 //0x64
 
+// [MiSTer-DB9-Pro BEGIN] - Saturn key gate (1 byte; bit 0 = unlocked)
+#define UIO_DB9_KEY     0xFE
+// [MiSTer-DB9-Pro END]
 #define JOY_RIGHT       0x01
 #define JOY_LEFT        0x02
 #define JOY_DOWN        0x04
@@ -262,15 +265,17 @@ char * GetMidiLinkSoundfont();
 void user_io_store_filename(char *filename);
 int user_io_use_cheats();
 
-// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: shared memory for DB9/DB15 detection
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: shared memory for DB9/DB15/Saturn detection
 // Uses POSIX shm instead of /tmp file to avoid blocking syscalls in the input hot path.
 // The shm segment persists across process restarts (survives until reboot or shm_unlink).
 void db9_shm_init();                          // map (or create) the shm segment
-void db9_shm_write(const char *type);         // write "DB9" or "DB15"
+void db9_shm_write(const char *type);         // write "DB9", "DB15", or "Saturn"
 void db9_shm_clear();                         // clear detection (on keyboard/USB input)
 const char *db9_shm_read();                   // read current value (NULL if empty)
-// Returns 1=DB9MD, 2=DB15, 0=not detected or cur_val already set (1 or 2).
+// Returns 1=Saturn, 2=DB9MD, 3=DB15, 0=not detected or cur_val already set.
 int user_io_read_db9_detected(unsigned int cur_val);
+// Maps joy_type to wire-format string; 1="Saturn", 2="DB9", 3="DB15", else NULL.
+const char *db9_type_name(int val);
 // [MiSTer-DB9 END]
 
 int process_ss(const char *rom_name, int enable = 1);

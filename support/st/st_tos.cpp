@@ -694,7 +694,7 @@ void tos_auto_db9()
 	if (val)
 	{
 		tos_set_extctrl((tos_get_extctrl() & ~0xC0000000u) | (val << 30));
-		printf("Auto-enabling %s for AtariST UserIO\n", val == 1 ? "DB9" : "DB15");
+		printf("Auto-enabling %s for AtariST UserIO\n", db9_type_name(val));
 	}
 }
 // [MiSTer-DB9 END]
