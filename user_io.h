@@ -278,6 +278,11 @@ int user_io_read_db9_detected(unsigned int cur_val);
 const char *db9_type_name(int val);
 // [MiSTer-DB9 END]
 
+// [MiSTer-DB9-Pro BEGIN] - Saturn-locked alert flag (consumed by Menu core status bar)
+// Returns 1 while a Saturn pad is currently detected and db9pro.key is missing/invalid.
+int db9_saturn_locked_alert();
+// [MiSTer-DB9-Pro END]
+
 int process_ss(const char *rom_name, int enable = 1);
 
 char is_f12_mod_needed();

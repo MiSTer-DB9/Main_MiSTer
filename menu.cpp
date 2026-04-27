@@ -7667,6 +7667,13 @@ void HandleUI(void)
 				}
 			}
 
+			// [MiSTer-DB9-Pro BEGIN] - Saturn-locked alert overrides status bar
+			if (db9_saturn_locked_alert())
+			{
+				sprintf(str, "    Saturn pad - key missing    ");
+			}
+			else
+			// [MiSTer-DB9-Pro END]
 			if (init_wait < 1)
 			{
 				sprintf(str, "       www.MiSTerFPGA.org       ");

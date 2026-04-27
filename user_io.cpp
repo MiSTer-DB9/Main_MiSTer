@@ -1423,6 +1423,13 @@ const char *db9_shm_read()
 	return db9_shm_ptr;
 }
 
+// [MiSTer-DB9-Pro BEGIN] - Saturn-locked alert flag
+// Set by user_io_joyraw_check_change() while a Saturn pad is detected and
+// db9pro.key is missing/invalid. Read by the Menu core status bar.
+static int saturn_locked_state = 0;
+int db9_saturn_locked_alert() { return saturn_locked_state; }
+// [MiSTer-DB9-Pro END]
+
 // Returns 1=Saturn, 2=DB9MD, 3=DB15, 0=not detected or cur_val already set.
 int user_io_read_db9_detected(unsigned int cur_val)
 {
@@ -2719,7 +2726,7 @@ static void user_io_joyraw_check_change()
 		return;
 	}
 
-	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+	// DB9/SNAC8 support
 	// Save DB9/DB15 detection state on physical button activity.
 	// Only written when the type changes or shm was cleared by USB/keyboard input.
 	// Type bits come from the FPGA hardware (bits 15-14), not from menu settings,
@@ -2734,7 +2741,12 @@ static void user_io_joyraw_check_change()
 		db9_shm_write(type);
 		last_shm_type = type;
 	}
-	// [MiSTer-DB9 END]
+
+	// [MiSTer-DB9-Pro BEGIN] - Saturn locked alert state (consumed by menu.cpp status bar)
+	int locked = (type == db9_type_name(1)) && !db9_key_saturn_unlocked();
+	if (locked && !saturn_locked_state) printf("DB9: Saturn pad detected but db9pro.key missing\n");
+	saturn_locked_state = locked;
+	// [MiSTer-DB9-Pro END]
 
 	// Iterate only over changed button bits (0-13) via ctz; usually 0 or 1 iterations.
 	changes &= 0x3FFF; // mask to button bits only, exclude type bits 15-14
