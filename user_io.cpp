@@ -1514,9 +1514,8 @@ void user_io_init(const char *path, const char *xml)
 	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: init shared memory for detection
 	db9_shm_init();
 	// [MiSTer-DB9 END]
-	// [MiSTer-DB9-Pro BEGIN] - Saturn key gate (out-of-band SPI command, not status[])
+	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (refresh streams 40B SPI on success)
 	db9_key_refresh();
-	spi_uio_cmd8(UIO_DB9_KEY, db9_key_saturn_unlocked() ? 1 : 0);
 	// [MiSTer-DB9-Pro END]
 
 	// Clean up old game ID when loading a new core

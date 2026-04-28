@@ -101,7 +101,7 @@
 #define UIO_MM2_HDD     0xF8 //0x54
 #define UIO_MM2_JOY     0xF9 //0x64
 
-// [MiSTer-DB9-Pro BEGIN] - Saturn key gate (1 byte; bit 0 = unlocked)
+// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (40-byte stream: 32B payload || 8B SipHash tag)
 #define UIO_DB9_KEY     0xFE
 // [MiSTer-DB9-Pro END]
 #define JOY_RIGHT       0x01
