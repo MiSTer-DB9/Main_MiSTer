@@ -26,7 +26,7 @@ CORE_NAME=(MiSTer)
 MAIN_BRANCH="master"
 COMPILATION_INPUT=(make)
 COMPILATION_OUTPUT=(bin/MiSTer)
-QUARTUS_IMAGE="theypsilon/gcc-arm:10.2-2020.11"
+QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
 
 if [[ "${FORCED:-false}" != "true" ]] && \
    [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] && \
