@@ -12,7 +12,7 @@ CORE_NAME=(MiSTer)
 MAIN_BRANCH="master"
 COMPILATION_INPUT=(make)
 COMPILATION_OUTPUT=(bin/MiSTer)
-QUARTUS_IMAGE="theypsilon/gcc-arm:10.2-2020.11"
+QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
 
 # [MiSTer-DB9 BEGIN] - fork-only cores have no upstream; sync_release is a no-op
 if [[ -z "${UPSTREAM_REPO}" ]]; then
