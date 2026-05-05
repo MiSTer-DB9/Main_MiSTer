@@ -1455,6 +1455,51 @@ const char *db9_type_name(int val)
 }
 // [MiSTer-DB9 END]
 
+// [MiSTer-DB9-Pro BEGIN] - clamp persisted Saturn UserIO selection when key locked
+// Called after the per-core saved config has been loaded into cur_status[].
+// If db9pro.key is missing/invalid and the Saturn-aware "UserIO Joystick"
+// option currently resolves to "Saturn", reset it to 0 (Off) so the FPGA
+// never receives Saturn as the requested mode and the OSD never renders the
+// Saturn label as the current value. The FPGA already AND-gates Saturn behind
+// `saturn_unlocked`; this is purely UX hygiene.
+static void db9_clamp_saturn_if_locked()
+{
+	if (db9_key_saturn_unlocked()) return;
+
+	for (int i = 2; ; i++)
+	{
+		char *item = user_io_get_confstr(i);
+		if (!item) break;
+		if (!item[0]) continue;
+
+		char label[256];
+		substrcpy(label, item, 1);
+		if (strcmp(label, "UserIO Joystick") != 0) continue;
+
+		char prefix[256];
+		substrcpy(prefix, item, 0);
+		char *p = prefix;
+		while ((*p == 'H' || *p == 'D' || *p == 'h' || *p == 'd') && strlen(p) >= 2) p += 2;
+		if (*p == 'P') p += 2;
+		if (*p != 'O' && *p != 'o') break;
+
+		int ex = (*p == 'o') ? 1 : 0;
+		char *opt = (p[1] == 'X') ? (p + 2) : (p + 1);
+		if (!*opt) break;
+
+		uint32_t cur = user_io_status_get(opt, ex);
+		char val[256];
+		substrcpy(val, item, 2 + cur);
+		if (!strcmp(val, "Saturn"))
+		{
+			user_io_status_set(opt, 0, ex);
+			printf("DB9: clamping locked Saturn UserIO selection to Off\n");
+		}
+		break;
+	}
+}
+// [MiSTer-DB9-Pro END]
+
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-select UserIO Joystick from detection shm
 static void user_io_auto_db9()
 {
@@ -1662,6 +1707,9 @@ void user_io_init(const char *path, const char *xml)
 				// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO from detection shm
 				if (!is_menu()) user_io_auto_db9();
 				// [MiSTer-DB9 END]
+				// [MiSTer-DB9-Pro BEGIN] - clamp persisted Saturn selection when key locked
+				if (!is_menu()) db9_clamp_saturn_if_locked();
+				// [MiSTer-DB9-Pro END]
 				user_io_status_set("[0]", 1);
 			}
 
@@ -1672,6 +1720,9 @@ void user_io_init(const char *path, const char *xml)
 				// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO on core launch
 				tos_auto_db9();
 				// [MiSTer-DB9 END]
+				// [MiSTer-DB9-Pro BEGIN] - clamp persisted Saturn selection when key locked (ST path)
+				db9_clamp_saturn_if_locked();
+				// [MiSTer-DB9-Pro END]
 				tos_upload(NULL);
 			}
 			else if (is_menu())
