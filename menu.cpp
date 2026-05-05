@@ -66,6 +66,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "profiling.h"
 #include "str_util.h"
 #include "autofire.h"
+// [MiSTer-DB9-Pro BEGIN] - hide Saturn from OSD when key locked
+#include "db9_key.h"
+// [MiSTer-DB9-Pro END]
 
 /*menu states*/
 enum MENU
@@ -1070,6 +1073,29 @@ void build_advanced_map_summary(advancedButtonMap *abm, char *dest_str, size_t d
 	snprintf(dest_str, dest_size, "%s->%s", input_str, output_str);
 }
 
+// [MiSTer-DB9-Pro BEGIN] - hide Saturn from "UserIO Joystick" cycle when key locked
+// Caller is the OSD render path and the +/-/select cycle handler; not the
+// controller-input hot path. Predicate scans the option's value list once
+// (substrcpy stops at the first empty slot, mirroring user_io_auto_db9).
+static int db9_locked_skip_value(const char *opt_entry, uint32_t idx)
+{
+	if (db9_key_saturn_unlocked()) return 0;
+	if (!opt_entry || (opt_entry[0] != 'O' && opt_entry[0] != 'o')) return 0;
+
+	char val[256];
+	int has_saturn = 0;
+	for (int vi = 2; ; vi++)
+	{
+		if (!substrcpy(val, opt_entry, vi)) break;
+		if (!strcmp(val, "Saturn")) { has_saturn = 1; break; }
+	}
+	if (!has_saturn) return 0;
+
+	substrcpy(val, opt_entry, 2 + idx);
+	return !strcmp(val, "Saturn");
+}
+// [MiSTer-DB9-Pro END]
+
 void HandleUI(void)
 {
 	PROFILE_FUNCTION();
@@ -2073,7 +2099,9 @@ void HandleUI(void)
 							substrcpy(s, p, 2 + x);
 							int l = strlen(s);
 							int arc = get_arc(s);
-							if (!l || arc < 0)
+							// [MiSTer-DB9-Pro BEGIN] - clamp render to Off if locked Saturn slipped through
+							if (!l || arc < 0 || db9_locked_skip_value(p, x))
+							// [MiSTer-DB9-Pro END]
 							{
 								// option's index is outside of available values.
 								// reset to 0.
@@ -2437,20 +2465,26 @@ void HandleUI(void)
 							if (byarm && is_x86() && p[1] == '2') x86_set_fdd_boot(!(x & 1));
 
 							// check if next value available
+							// [MiSTer-DB9-Pro BEGIN] - skip Saturn slot when key locked
 							if (minus)
 							{
 								while(1)
 								{
 									substrcpy(s, p, 2 + x);
-									if (strlen(s) && get_arc(s) >= 0) break;
+									if (strlen(s) && get_arc(s) >= 0 && !db9_locked_skip_value(p, x)) break;
 									x = (x - 1) & mask;
 								}
 							}
 							else
 							{
-								substrcpy(s, p, 2 + x);
-								if (!strlen(s) || get_arc(s) < 0) x = 0;
+								while(1)
+								{
+									substrcpy(s, p, 2 + x);
+									if (strlen(s) && get_arc(s) >= 0 && !db9_locked_skip_value(p, x)) break;
+									x = (x + 1) & mask;
+								}
 							}
+							// [MiSTer-DB9-Pro END]
 
 							user_io_status_set(p + 1, x, ex);
 
