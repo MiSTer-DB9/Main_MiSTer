@@ -113,6 +113,12 @@ echo
 # a bad baseline must never block the sync).
 ./.github/merge_validate.sh baseline . || true
 
+# input hot-path latency baseline (Critical Rule #2; fork-only). Snapshot
+# the PRE-merge forbidden-token set so the post-merge check is a pure delta:
+# only an upstream change that NEWLY drags a sleep/alloc/blocking-I/O into a
+# hot-path function trips it. Informational here, never blocks.
+python3 ./.github/check_input_latency.py baseline || true
+
 git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}" || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" "$@"
 
 # status bit collision tripwire (fork-only)
@@ -122,6 +128,10 @@ git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}" || ./.github/notif
 # the merge is committed/pushed to ${MAIN_BRANCH}, exactly like the collision
 # tripwire above.
 ./.github/merge_validate.sh check . || ./.github/notify_error.sh "UPSTREAM MERGE BROKE PORT VALIDATION" "$@"
+
+# input hot-path latency regression tripwire (fork-only). Same delta model
+# and abort path as the collision tripwire above.
+python3 ./.github/check_input_latency.py check || ./.github/notify_error.sh "UPSTREAM MERGE BROKE INPUT LATENCY" "$@"
 
 git submodule update --init --recursive
 
