@@ -1,0 +1,39 @@
+name: Input Latency Guard
+
+# Critical Rule #2 (the latency rule): the controller input hot path
+# must stay free of sleeps / blocking I/O / heap alloc / logging / locks.
+# Regression-delta gate (check_input_latency.py) — fails only on a forbidden
+# construct NEWLY introduced into a hot-path function vs the PR base / the
+# previous push. Pure Python; no Quartus, no iverilog, no network.
+
+on:
+  push:
+    paths:
+      - input.cpp
+      - user_io.cpp
+      - .github/check_input_latency.py
+  pull_request:
+    paths:
+      - input.cpp
+      - user_io.cpp
+      - .github/check_input_latency.py
+
+permissions:
+  contents: read
+
+jobs:
+  input-latency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # need history for the baseline gitref
+
+      - name: Hot-path latency regression check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            REF="${{ github.event.pull_request.base.sha }}"
+          else
+            REF="${{ github.event.before }}"
+          fi
+          python3 .github/check_input_latency.py check --ref "$REF"
