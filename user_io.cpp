@@ -1500,11 +1500,16 @@ static void db9_clamp_saturn_if_locked()
 }
 // [MiSTer-DB9-Pro END]
 
-// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-select UserIO Joystick from detection shm
-static void user_io_auto_db9()
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-select UserIO Joystick from detection
+// allow_override=0: boot path, only write when selector is Off (saved-config
+//   collisions are unwound by db9_clamp_saturn_if_locked running right after).
+// allow_override=1: OSD-open re-detect, always replace so a hot-swap live-updates.
+static void user_io_userio_select(const char *type, int allow_override)
 {
-	const char *type = db9_shm_read();
 	if (!type) return;
+	// [MiSTer-DB9-Pro BEGIN] - gate: never select Saturn while locked
+	if (!db9_key_saturn_unlocked() && !strcmp(type, "Saturn")) return;
+	// [MiSTer-DB9-Pro END]
 
 	for (int i = 2; ; i++)
 	{
@@ -1530,7 +1535,7 @@ static void user_io_auto_db9()
 		if (!*opt) break;
 
 		uint32_t cur = user_io_status_get(opt, ex);
-		if (cur != 0) break; // Already set, don't override
+		if (!allow_override && cur != 0) break; // boot path: already set, don't override
 
 		// Find matching option value
 		for (int vi = 2; ; vi++)
@@ -1539,13 +1544,19 @@ static void user_io_auto_db9()
 			if (!substrcpy(val, item, vi)) break;
 			if (strstr(val, type))
 			{
+				if ((uint32_t)(vi - 2) == cur) break; // no-op (avoid SPI write spam)
 				user_io_status_set(opt, vi - 2, ex);
-				printf("Auto-enabling %s for %s\n", type, label);
+				printf("%s %s for %s\n", allow_override ? "OSD re-detect:" : "Auto-enabling", type, label);
 				break;
 			}
 		}
 		break;
 	}
+}
+
+static void user_io_auto_db9()
+{
+	user_io_userio_select(db9_shm_read(), /*allow_override=*/0);
 }
 // [MiSTer-DB9 END]
 
@@ -2797,6 +2808,26 @@ static void user_io_joyraw_check_change()
 	if (locked && !saturn_locked_state) printf("DB9: Saturn pad detected but db9pro.key missing\n");
 	saturn_locked_state = locked;
 	// [MiSTer-DB9-Pro END]
+
+	// OSD-open re-detect: joy_raw[15:14] reports the FPGA probe FSM's live result
+	// while OSD is visible; mirror it into the UserIO Joystick selector so the
+	// slider tracks hot-swaps. Edge-triggered via pointer-compare on stable
+	// db9_type_name literals — one SPI write per adapter swap. SNAC/MT32-primary
+	// no-op naturally: FPGA gates probe_active off, joy_raw[15:14] echoes
+	// joy_type, so type == last_osd_writeback_type after the first tick.
+	static const char *last_osd_writeback_type = NULL;
+	if (user_io_osd_is_visible())
+	{
+		if (type && type != last_osd_writeback_type)
+		{
+			user_io_userio_select(type, /*allow_override=*/1);
+			last_osd_writeback_type = type;
+		}
+	}
+	else
+	{
+		last_osd_writeback_type = NULL;
+	}
 
 	// Iterate only over changed button bits (0-13) via ctz; usually 0 or 1 iterations.
 	changes &= 0x3FFF; // mask to button bits only, exclude type bits 15-14
