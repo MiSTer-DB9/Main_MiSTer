@@ -106,6 +106,9 @@ typedef struct {
 	uint8_t autofire_on_directions;
 	char screenshot_image_format[16];
 	uint8_t hdmi_spd;
+	// [MiSTer-DB9 BEGIN] - opt-in auto-select of "UserIO Joystick" mode
+	uint8_t userio_auto_select;
+	// [MiSTer-DB9 END]
 
 } cfg_t;
 

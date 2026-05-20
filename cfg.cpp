@@ -138,6 +138,9 @@ static const ini_var_t ini_vars[] =
 	{ "AUTOFIRE_ON_DIRECTIONS", (void *)(&(cfg.autofire_on_directions)), UINT8, 0, 1 },
 	{ "SCREENSHOT_IMAGE_FORMAT", (void *)(&(cfg.screenshot_image_format)), STRING, 0, sizeof(cfg.screenshot_image_format) - 1 },
 	{ "HDMI_SPD", (void *)(&(cfg.hdmi_spd)), UINT8, 0, 1 },
+	// [MiSTer-DB9 BEGIN] - opt-in auto-select of "UserIO Joystick" mode
+	{ "USERIO_AUTO_SELECT", (void *)(&(cfg.userio_auto_select)), UINT8, 0, 1 },
+	// [MiSTer-DB9 END]
 
 };
 
