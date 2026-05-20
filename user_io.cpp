@@ -1403,6 +1403,7 @@ void db9_shm_init()
 
 void db9_shm_write(const char *type)
 {
+	if (!cfg.userio_auto_select) return;
 	if (!db9_shm_ptr || !type) return;
 	// [MiSTer-DB9-Pro BEGIN] - gate: never advertise Saturn while locked
 	if (!db9_key_saturn_unlocked() && !strcmp(type, "Saturn")) return;
@@ -1567,9 +1568,6 @@ void user_io_init(const char *path, const char *xml)
 	core_name[0] = 0;
 	disable_osd = 0;
 
-	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: init shared memory for detection
-	db9_shm_init();
-	// [MiSTer-DB9 END]
 	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (refresh streams 40B SPI on success)
 	db9_key_refresh();
 	// [MiSTer-DB9-Pro END]
@@ -1636,6 +1634,10 @@ void user_io_init(const char *path, const char *xml)
 
 	cfg_parse();
 	cfg_print();
+
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: init shared memory for detection
+	if (cfg.userio_auto_select) db9_shm_init();
+	// [MiSTer-DB9 END]
 	while (cfg.waitmount[0] && !is_menu())
 	{
 		printf("> > > wait for %s mount < < <\n", cfg.waitmount);
@@ -2816,7 +2818,7 @@ static void user_io_joyraw_check_change()
 	// no-op naturally: FPGA gates probe_active off, joy_raw[15:14] echoes
 	// joy_type, so type == last_osd_writeback_type after the first tick.
 	static const char *last_osd_writeback_type = NULL;
-	if (user_io_osd_is_visible())
+	if (cfg.userio_auto_select && user_io_osd_is_visible())
 	{
 		if (type && type != last_osd_writeback_type)
 		{
