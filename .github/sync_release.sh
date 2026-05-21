@@ -108,14 +108,24 @@ fi
 echo "END rerere-train.sh"
 echo
 
+# Snapshot the PRE-merge port-wiring failures so the post-merge gate below can
+# fail only on regressions the upstream merge itself introduced (best-effort —
+# a bad baseline must never block the sync).
+./.github/merge_validate.sh baseline . || true
+
 git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}" || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" "$@"
 
 # status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"
 
+# post-merge port-validation gate (fork-only; regression-only). Aborts before
+# the merge is committed/pushed to ${MAIN_BRANCH}, exactly like the collision
+# tripwire above.
+./.github/merge_validate.sh check . || ./.github/notify_error.sh "UPSTREAM MERGE BROKE PORT VALIDATION" "$@"
+
 git submodule update --init --recursive
 
-# merge + push, then POST workflow_dispatch to release.yml.
+# merge + push, then POST workflow_dispatch to release_make.yml.
 # NEED_REBUILD only picks the commit subject — release.sh's source-hash decides
 # the real rebuild.
 if [[ "${NEED_REBUILD}" == "true" ]]; then
@@ -125,14 +135,14 @@ else
 fi
 retry -- git push origin "${MAIN_BRANCH}"
 
-# Trigger release.yml. The push above uses the default GITHUB_TOKEN, and GH
+# Trigger release_make.yml. The push above uses the default GITHUB_TOKEN, and GH
 # Actions deliberately doesn't trigger workflows from GITHUB_TOKEN pushes (loop
-# guard), so release.yml's `on: push` is structurally unreachable from here.
+# guard), so release_make.yml's `on: push` is structurally unreachable from here.
 # But workflow_dispatch via API authenticated with GITHUB_TOKEN *does* fire
 # downstream runs (same-repo dispatch; cross-repo PAT not needed).
-WORKFLOW_DISPATCH_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/dispatches"
+WORKFLOW_DISPATCH_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/release_make.yml/dispatches"
 echo
-echo "Triggering release.yml: POST ${WORKFLOW_DISPATCH_URL} ref=${MAIN_BRANCH}"
+echo "Triggering release_make.yml: POST ${WORKFLOW_DISPATCH_URL} ref=${MAIN_BRANCH}"
 curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
     --retry-connrefused --retry-max-time 120 --max-time 60 -X POST \
     -H "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -141,4 +151,4 @@ curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
     --data "{\"ref\":\"${MAIN_BRANCH}\",\"inputs\":{\"upstream_release_sha\":\"${COMMIT_TO_MERGE}\",\"upstream_head_at_sync\":\"${UPSTREAM_HEAD_SHA}\"}}" \
     "${WORKFLOW_DISPATCH_URL}"
 echo
-echo "release.yml dispatch sent successfully."
+echo "release_make.yml dispatch sent successfully."

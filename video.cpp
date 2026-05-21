@@ -2018,7 +2018,6 @@ static void set_vrr_mode()
 	{
 		for (uint8_t i = 1; i < sizeof(vrr_modes) / sizeof(vrr_cap_t); i++)
 		{
-			if (i == VRR_FREESYNC && !cfg.hdmi_spd) continue;
 			if (vrr_modes[i].available)
 			{
 				use_vrr = i;
@@ -2028,7 +2027,7 @@ static void set_vrr_mode()
 	}
 	else if (cfg.vrr_mode == 2)
 	{ //force AMD Freesync
-		if (cfg.hdmi_spd) use_vrr = VRR_FREESYNC;
+		use_vrr = VRR_FREESYNC;
 	}
 	else if (cfg.vrr_mode == 3)
 	{ //force Vesa Forum VRR
@@ -3008,7 +3007,7 @@ static void set_yc_mode()
 
 static void spd_config_update()
 {
-	if (!cfg.hdmi_spd || use_freesync_spd) return;
+	if (use_freesync_spd) return;
 
 	if (cfg.direct_video && (cfg.spd_quirk < 3))
 	{

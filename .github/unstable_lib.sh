@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shared constants + helpers for the unstable channel.
-# Sourced by both unstable_preflight.sh (cheap pre-check + state setup) and
-# unstable_release.sh (rerere train + merge + Quartus build + upload).
+# Sourced by unstable_preflight.sh (cheap pre-check + state setup),
+# unstable_merge.sh (merge + body advance), and unstable_publish.sh (upload).
 #
 # UNSTABLE_TAG / RETENTION are hard-coded by design — same across every fork,
 # no per-section templating. UNSTABLE_BRANCH derives from MAIN_BRANCH so the
@@ -29,6 +29,7 @@ write_release_body() {
     BRANCH_SHA="${branch_sha}" \
     TS="${ts}" \
     SOURCE_HASH="${source_hash}" \
+    BUILD_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID:-}" \
     MAIN_BRANCH="${MAIN_BRANCH}" \
     RETENTION="${RETENTION}" \
     EXISTING_BODY="${existing_body}" \
@@ -37,11 +38,16 @@ import os, re, sys
 branch = os.environ["MAIN_BRANCH"]
 header = f"Per-core unstable RBFs built off upstream HEAD. Last {os.environ['RETENTION']} retained per filename pattern."
 sh = os.environ.get("SOURCE_HASH", "")
+# `build:` links the workflow run that produced this stanza's RBF (carries
+# the *.sta Quartus timing artifacts) — one per variant since each variant
+# is built by its own independent run. last_unstable_ts dropped: never
+# parsed, redundant with the asset filename's _YYYYMMDD_HHMM_ + GH created_at.
+# Order coherent with the stable body: build -> identity SHAs -> source_hash.
 new_stanza = (
+    f"build:                    {os.environ['BUILD_URL']}\n"
     f"last_unstable_sha:        {os.environ['UPSTREAM_SHA']}\n"
     f"last_unstable_master_sha: {os.environ['MASTER_SHA']}\n"
-    f"last_unstable_branch_sha: {os.environ['BRANCH_SHA']}\n"
-    f"last_unstable_ts:         {os.environ['TS']}"
+    f"last_unstable_branch_sha: {os.environ['BRANCH_SHA']}"
     + (f"\nsource_hash:              {sh}" if sh else "")
 )
 stanzas = {}
