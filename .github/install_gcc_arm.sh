@@ -43,7 +43,10 @@ echo "Downloading ${ARM_GCC_TARBALL}..." >&2
 curl -fL --retry 5 --retry-delay 2 -o "${TMP}/${ARM_GCC_TARBALL}" "${ARM_GCC_URL}"
 
 echo "Verifying MD5..." >&2
-echo "${ARM_GCC_MD5}  ${TMP}/${ARM_GCC_TARBALL}" | md5sum -c -
+# --status: silence the "OK"/"FAILED" stdout line so it doesn't pollute the
+# bin_dir command substitution in the caller workflow (only stdout we want is
+# the final `echo "${BIN_DIR}"` below).
+echo "${ARM_GCC_MD5}  ${TMP}/${ARM_GCC_TARBALL}" | md5sum --status -c -
 
 echo "Extracting into ${DEST}..." >&2
 tar -xf "${TMP}/${ARM_GCC_TARBALL}" -C "${DEST}"
