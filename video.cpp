@@ -2981,7 +2981,7 @@ static void spd_config_update()
 {
 	if (use_freesync_spd) return;
 
-	if (cfg.direct_video)
+	if (cfg.direct_video && (cfg.spd_quirk < 3))
 	{
 		// Custom SPD IF for additional DV1 metadata
 		VideoInfo *vi = &current_video_info;
@@ -2992,7 +2992,7 @@ static void spd_config_update()
 			'D',
 			'V',
 			'1', // version
-			(uint8_t)((vi->interlaced ? 1 : 0) | (menu_present() ? 4 : 0) | (vi->rotated ? 8 : 0) | (arcade_get_direction() << 4)),
+			(uint8_t)((vi->interlaced ? 1 : 0) | ((menu_present() && (cfg.spd_quirk < 2)) ? 4 : 0) | (vi->rotated ? 8 : 0) | (arcade_get_direction() << 4)),
 			(uint8_t)(vi->pixrep ? vi->pixrep : (vi->ctime / vi->width)),
 			(uint8_t)vi->de_h,
 			(uint8_t)(vi->de_h >> 8),
@@ -3014,7 +3014,7 @@ static void spd_config_update()
 
 		hdmi_spd_config(data);
 	}
-	else
+	else if(!cfg.spd_quirk)
 	{
 		// Standard SPD IF
 		uint8_t data[31] = {
@@ -3058,7 +3058,7 @@ void video_mode_adjust()
 
 	static int menu = 0;
 	int menu_now = menu_present();
-	if(menu != menu_now) spd_config_update();
+	if(menu != menu_now && cfg.spd_quirk < 2) spd_config_update();
 	menu = menu_now;
 
 	if (vid_changed && !is_menu())
