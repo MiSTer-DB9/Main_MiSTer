@@ -115,6 +115,10 @@ typedef struct {
 	// [MiSTer-DB9 BEGIN] - opt-in auto-select of "UserIO Joystick" mode
 	uint8_t userio_auto_select;
 	// [MiSTer-DB9 END]
+	// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0] audio routing
+	char audio_mode[8];
+	uint8_t audio_mode_id;
+	// [MiSTer-DB9 END]
 } cfg_t;
 
 extern cfg_t cfg;

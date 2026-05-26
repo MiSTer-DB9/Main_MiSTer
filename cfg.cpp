@@ -148,6 +148,9 @@ static const ini_var_t ini_vars[] =
 	// [MiSTer-DB9 BEGIN] - opt-in auto-select of "UserIO Joystick" mode
 	{ "USERIO_AUTO_SELECT", (void *)(&(cfg.userio_auto_select)), UINT8, 0, 1 },
 	// [MiSTer-DB9 END]
+	// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0] audio routing
+	{ "AUDIO_MODE", (void*)(cfg.audio_mode), STRING, 0, sizeof(cfg.audio_mode) - 1 },
+	// [MiSTer-DB9 END]
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
@@ -639,6 +642,11 @@ void cfg_parse()
 		}
 	}
 
+	// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0] audio routing
+	cfg.audio_mode_id = 0;
+	if (!strcasecmp(cfg.audio_mode, "i2s")) cfg.audio_mode_id = 1;
+	else if (!strcasecmp(cfg.audio_mode, "spdif")) cfg.audio_mode_id = 2;
+	// [MiSTer-DB9 END]
 }
 
 bool cfg_has_video_sections()
