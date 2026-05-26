@@ -3274,6 +3274,10 @@ void user_io_send_buttons(char force)
 	if (cfg.direct_video) map |= CONF_DIRECT_VIDEO;
 	if (cfg.direct_video == 2) map |= CONF_DIRECT_VIDEO2;
 	if (vga_fb) map |= CONF_VGA_FB;
+	// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0] audio routing
+	if (cfg.audio_mode_id == 1) map |= CONF_AUDIO_MODE_I2S;
+	else if (cfg.audio_mode_id == 2) map |= CONF_AUDIO_MODE_SPDIF;
+	// [MiSTer-DB9 END]
 
 	if ((map != key_map) || force)
 	{
