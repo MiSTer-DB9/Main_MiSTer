@@ -36,6 +36,9 @@
 #include "miniz.h"
 #include "cheats.h"
 #include "video.h"
+// [MiSTer-DB9 BEGIN] - 1920x1200 framebuffer support: reconcile MiSTer_fb DTB reservation
+#include "dtb_patcher.h"
+// [MiSTer-DB9 END]
 #include "audio.h"
 #include "shmem.h"
 #include "ide.h"
@@ -1678,6 +1681,11 @@ void user_io_init(const char *path, const char *xml)
 		bootcore_init(xml ? xml : path);
 	}
 
+	// [MiSTer-DB9 BEGIN] - 1920x1200 framebuffer support: reconcile MiSTer_fb DTB reservation
+	// with the configured VIDEO_MODE before video_init(). On-disk patch only; takes effect
+	// on the next user-initiated reboot. Safe to call repeatedly (idempotent).
+	dtb_reconcile_for_video_mode();
+	// [MiSTer-DB9 END]
 	video_init();
 	if (strlen(cfg.font)) LoadFont(cfg.font);
 	load_volume();
