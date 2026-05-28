@@ -2849,8 +2849,16 @@ static void user_io_joyraw_check_change()
 	// The menu (boot) core has no UserIO Joystick selector to opt in through,
 	// and its FPGA-side autodetect always runs, so injection is always on there
 	// regardless of userio_auto_select (matches the MiSTer.ini contract).
+	//
+	// Minimig (Amiga) and AtariST have no CONF_STR; their UserIO Joystick
+	// selector lives in a separate ext-config register (bits [31:30]), not in
+	// cur_status, so the cur_status[15] test above never sees it. Check those
+	// registers explicitly so a manually-picked DB9MD/DB15 mode enables nav.
 	static int prev_inject_enabled = 0;
-	int inject_enabled = is_menu() || cfg.userio_auto_select || (((uint8_t)cur_status[15] & 0xE0) != 0);
+	int inject_enabled = is_menu() || cfg.userio_auto_select
+		|| (((uint8_t)cur_status[15] & 0xE0) != 0)
+		|| (is_minimig() && ((minimig_get_extcfg() >> 30) & 3))
+		|| (is_st()      && ((tos_get_extctrl()  >> 30) & 3));
 
 	// Held-key release on transition: if the gate just flipped to disabled
 	// while DB9 buttons are held, walk the previous joyraw and release the
