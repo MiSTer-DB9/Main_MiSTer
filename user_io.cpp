@@ -2846,8 +2846,11 @@ static void user_io_joyraw_check_change()
 	// top three bits of cur_status[15] catches both layouts without a
 	// CONF_STR walk. With userio_auto_select=0 and joy_type=Off, FPGA probe
 	// keeps running but its joy_raw button payload is dropped here.
+	// The menu (boot) core has no UserIO Joystick selector to opt in through,
+	// and its FPGA-side autodetect always runs, so injection is always on there
+	// regardless of userio_auto_select (matches the MiSTer.ini contract).
 	static int prev_inject_enabled = 0;
-	int inject_enabled = cfg.userio_auto_select || (((uint8_t)cur_status[15] & 0xE0) != 0);
+	int inject_enabled = is_menu() || cfg.userio_auto_select || (((uint8_t)cur_status[15] & 0xE0) != 0);
 
 	// Held-key release on transition: if the gate just flipped to disabled
 	// while DB9 buttons are held, walk the previous joyraw and release the
