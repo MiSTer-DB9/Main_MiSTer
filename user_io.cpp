@@ -2831,19 +2831,44 @@ static void user_io_joyraw_check_change()
 		last_osd_writeback_type = NULL;
 	}
 
-	// Iterate only over changed button bits (0-13) via ctz; usually 0 or 1 iterations.
-	changes &= 0x3FFF; // mask to button bits only, exclude type bits 15-14
-	while (changes) {
-		int i = __builtin_ctz(changes);
+	// OSD-nav injection gate: enabled when the user opted into auto-select,
+	// OR when they explicitly picked a non-Off UserIO Joystick mode. status
+	// bits 125/126/127 cover joy_type in both the 2-bit [127:126] and 3-bit
+	// [127:125] forms (see the fork hazard notes), so testing the
+	// top three bits of cur_status[15] catches both layouts without a
+	// CONF_STR walk. With userio_auto_select=0 and joy_type=Off, FPGA probe
+	// keeps running but its joy_raw button payload is dropped here.
+	static int prev_inject_enabled = 0;
+	int inject_enabled = cfg.userio_auto_select || (((uint8_t)cur_status[15] & 0xE0) != 0);
 
-		// Determine if this was a Press (1) or Release (0)
-		// We check the *current* joyraw state at that bit index
-		int is_pressed = (joyraw >> i) & 1;
+	// Held-key release on transition: if the gate just flipped to disabled
+	// while DB9 buttons are held, walk the previous joyraw and release the
+	// matching keys so no scancode stays stuck in input_joyraw_kbd's state.
+	if (prev_inject_enabled && !inject_enabled && (joyraw_bits & 0x3FFF)) {
+		uint16_t held = joyraw_bits & 0x3FFF;
+		while (held) {
+			int i = __builtin_ctz(held);
+			input_joyraw_kbd(joyraw_mapping[i], 0);
+			held &= held - 1;
+		}
+	}
+	prev_inject_enabled = inject_enabled;
 
-		input_joyraw_kbd(joyraw_mapping[i], is_pressed);
+	if (inject_enabled) {
+		// Iterate only over changed button bits (0-13) via ctz; usually 0 or 1 iterations.
+		changes &= 0x3FFF; // mask to button bits only, exclude type bits 15-14
+		while (changes) {
+			int i = __builtin_ctz(changes);
 
-		// Clear the lowest set bit so we can find the next one
-		changes &= changes - 1;
+			// Determine if this was a Press (1) or Release (0)
+			// We check the *current* joyraw state at that bit index
+			int is_pressed = (joyraw >> i) & 1;
+
+			input_joyraw_kbd(joyraw_mapping[i], is_pressed);
+
+			// Clear the lowest set bit so we can find the next one
+			changes &= changes - 1;
+		}
 	}
 
 	// Update history
