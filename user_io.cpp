@@ -2819,43 +2819,51 @@ static void user_io_joyraw_check_change()
 	saturn_locked_state = locked;
 	// [MiSTer-DB9-Pro END]
 
-	// OSD-open re-detect: joy_raw[15:14] reports the FPGA probe FSM's live result
-	// while OSD is visible; mirror it into the UserIO Joystick selector so the
-	// slider tracks hot-swaps. Edge-triggered via pointer-compare on stable
-	// db9_type_name literals — one SPI write per adapter swap. SNAC/MT32-primary
-	// no-op naturally: FPGA gates probe_active off, joy_raw[15:14] echoes
-	// joy_type, so type == last_osd_writeback_type after the first tick.
-	static const char *last_osd_writeback_type = NULL;
-	if (cfg.userio_auto_select && user_io_osd_is_visible())
+	// OSD-open re-detect: joy_raw[15:14] is the FPGA probe FSM's live result while
+	// OSD is visible. A fresh DB9 button press mirrors the detected pad type into
+	// the UserIO Joystick selector so the selector always matches the hardware
+	// actually in use: it enables from Off, and it auto-corrects a wrong protocol.
+	// (Example of the latter: selector left on DB15 while a DB9MD pad is plugged
+	// in — in OSD the probe routes the real pad so nav works, but on OSD-close the
+	// selector drives gameplay, so a stale DB15 would misread the DB9MD pad. The
+	// press snaps the selector to DB9MD, matching the OSD behavior.)
+	//
+	// Gated on a fresh button press (a button bit 0-13 that changed and is now
+	// set), not the type bits alone: the FPGA detects DB9MD/Saturn by presence
+	// (D1=D0=0 signature / Saturn protocol validity), so without this an idle
+	// connected pad would flip the selector with no user action — bad for a USB
+	// user who left the adapter plugged in. So an idle pad never moves the
+	// selector; only an actual press does. To keep DB9 disabled, leave it idle
+	// (selector stays put) and pick Off via USB — a press means "use this pad".
+	// user_io_userio_select() no-ops when the selector already matches, so a
+	// matching press costs no SPI write. SNAC/MT32-primary stay quiet: joy_raw
+	// forces buttons to 0, so btn_press never asserts.
+	uint16_t btn_press = changes & joyraw & 0x3FFF;
+	if (cfg.userio_auto_select && user_io_osd_is_visible() && type && btn_press)
 	{
-		if (type && type != last_osd_writeback_type)
-		{
-			user_io_userio_select(type, /*allow_override=*/1);
-			last_osd_writeback_type = type;
-		}
-	}
-	else
-	{
-		last_osd_writeback_type = NULL;
+		user_io_userio_select(type, /*allow_override=*/1);
 	}
 
-	// OSD-nav injection gate: enabled when the user opted into auto-select,
-	// OR when they explicitly picked a non-Off UserIO Joystick mode. status
-	// bits 125/126/127 cover joy_type in both the 2-bit [127:126] and 3-bit
-	// [127:125] forms (see hazards/status-in-truncation.md), so testing the
-	// top three bits of cur_status[15] catches both layouts without a
-	// CONF_STR walk. With userio_auto_select=0 and joy_type=Off, FPGA probe
-	// keeps running but its joy_raw button payload is dropped here.
+	// OSD-nav injection gate: enabled iff a non-Off UserIO Joystick mode is
+	// active. status bits 125/126/127 cover joy_type in both the 2-bit
+	// [127:126] and 3-bit [127:125] forms (see hazards/status-in-truncation.md),
+	// so testing the top three bits of cur_status[15] catches both layouts
+	// without a CONF_STR walk. A manual Off (joy_type=0) therefore disables
+	// nav even under userio_auto_select — that's the contract: Off means off.
+	// Under auto-select, the button-gated writeback above sets the selector
+	// non-Off on the first DB9 press; user_io_status_set() updates cur_status[]
+	// synchronously, and it runs before this gate, so that same press both
+	// selects the mode and enables nav (no chicken-and-egg).
 	// The menu (boot) core has no UserIO Joystick selector to opt in through,
 	// and its FPGA-side autodetect always runs, so injection is always on there
-	// regardless of userio_auto_select (matches the MiSTer.ini contract).
+	// (matches the MiSTer.ini contract).
 	//
 	// Minimig (Amiga) and AtariST have no CONF_STR; their UserIO Joystick
 	// selector lives in a separate ext-config register (bits [31:30]), not in
 	// cur_status, so the cur_status[15] test above never sees it. Check those
 	// registers explicitly so a manually-picked DB9MD/DB15 mode enables nav.
 	static int prev_inject_enabled = 0;
-	int inject_enabled = is_menu() || cfg.userio_auto_select
+	int inject_enabled = is_menu()
 		|| (((uint8_t)cur_status[15] & 0xE0) != 0)
 		|| (is_minimig() && ((minimig_get_extcfg() >> 30) & 3))
 		|| (is_st()      && ((tos_get_extctrl()  >> 30) & 3));
