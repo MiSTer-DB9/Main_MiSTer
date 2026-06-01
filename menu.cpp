@@ -5349,12 +5349,18 @@ void HandleUI(void)
 			MakeFile("/tmp/FULLPATH", selPath);
 			MakeFile("/tmp/FILESELECT", "active");
 		}
-		//BEGIN WALLPAPERS
-		if (cfg.game_wallpapers && user_io_status_get("[3:1]") == 1)
+		// [MiSTer-DB9 BEGIN] - game wallpapers: refresh OSD bg only when the selection changes
+		if (cfg.game_wallpapers && user_io_status_get("[3:1]") == 1 && flist_nDirEntries())
 		{
-			video_menu_bg(user_io_status_get("[3:1]"));
+			static char wp_last[256] = "";
+			const char *an = flist_SelectedItem()->altname;
+			if (strcmp(an, wp_last))
+			{
+				snprintf(wp_last, sizeof(wp_last), "%s", an);
+				video_menu_bg(1);
+			}
 		}
-		//END WALLPAPERS
+		// [MiSTer-DB9 END]
 		break;
 
 	case MENU_FILE_SELECT2:
