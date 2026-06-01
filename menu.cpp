@@ -5349,6 +5349,12 @@ void HandleUI(void)
 			MakeFile("/tmp/FULLPATH", selPath);
 			MakeFile("/tmp/FILESELECT", "active");
 		}
+		//BEGIN WALLPAPERS
+		if (cfg.game_wallpapers && user_io_status_get("[3:1]") == 1)
+		{
+			video_menu_bg(user_io_status_get("[3:1]"));
+		}
+		//END WALLPAPERS
 		break;
 
 	case MENU_FILE_SELECT2:
