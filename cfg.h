@@ -60,6 +60,9 @@ typedef struct {
 	uint8_t browse_expand;
 	uint8_t logo;
 	uint8_t log_file_entry;
+	// [MiSTer-DB9 BEGIN] - game wallpapers (OSD per-game preview)
+	uint8_t game_wallpapers;
+	// [MiSTer-DB9 END]
 	uint8_t shmask_mode_default;
 	int bt_auto_disconnect;
 	int bt_reset_before_pair;

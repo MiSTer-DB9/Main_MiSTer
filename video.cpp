@@ -3681,6 +3681,40 @@ static Imlib_Image load_bg()
 		if (!FileExists(fname)) fname = 0;
 	}
 
+	// [MiSTer-DB9 BEGIN] - game wallpapers: per-game OSD preview image
+	if (cfg.game_wallpapers)
+	{
+		static char bgdir[128];
+		int alt = altcfg();
+		snprintf(bgdir, sizeof(bgdir), "wallpapers_alt_%d", alt);
+		if (alt == 1 && !PathIsDir(bgdir)) strcpy(bgdir, "wallpapers_alt");
+		if (alt <= 0 || !PathIsDir(bgdir)) strcpy(bgdir, "wallpapers");
+		if (PathIsDir(bgdir))
+		{
+			// static so the returned pointer outlives this block
+			static char fullpath[256];
+			fname = 0;
+
+			// per-game image named after the selected entry
+			if (flist_nDirEntries())
+			{
+				const char *altname = flist_SelectedItem()->altname;
+				snprintf(fullpath, sizeof(fullpath), "%s/%s.png", bgdir, altname);
+				if (!FileExists(fullpath)) snprintf(fullpath, sizeof(fullpath), "%s/%s.jpg", bgdir, altname);
+				if (FileExists(fullpath)) fname = fullpath;
+			}
+
+			// fall back to a generic default image
+			if (!fname)
+			{
+				snprintf(fullpath, sizeof(fullpath), "%s/default.png", bgdir);
+				if (!FileExists(fullpath)) snprintf(fullpath, sizeof(fullpath), "%s/default.jpg", bgdir);
+				if (FileExists(fullpath)) fname = fullpath;
+			}
+		}
+	}
+	// [MiSTer-DB9 END]
+
 	if (!fname)
 	{
 		static char bgdir[128];
@@ -3814,6 +3848,12 @@ void video_menu_bg(int n, int idle)
 			switch (n)
 			{
 			case 1:
+				// [MiSTer-DB9 BEGIN] - game wallpapers: drop cached bg so the per-game image reloads
+				if (cfg.game_wallpapers && menubg)
+				{
+					imlib_context_set_image(menubg); imlib_free_image(); menubg = 0;
+				}
+				// [MiSTer-DB9 END]
 				if (!menubg) menubg = load_bg();
 				if (menubg)
 				{
