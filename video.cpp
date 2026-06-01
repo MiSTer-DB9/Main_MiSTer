@@ -32,8 +32,13 @@
 #include "support/arcade/mra_loader.h"
 #include "lib/imlib2/Imlib2.h"
 #include "lib/md5/md5.h"
+// [MiSTer-DB9 BEGIN] - 1920x1200 framebuffer support: runtime cap from MiSTer_fb DTB
+#include "dtb_patcher.h"
+// [MiSTer-DB9 END]
 
-#define FB_SIZE  (1920*1080)
+// [MiSTer-DB9 BEGIN] - widen FB_SIZE to fit 1920x1200 when kernel DTB reserves 16 MiB
+#define FB_SIZE  (1920*1200)
+// [MiSTer-DB9 END]
 #define FB_ADDR  (0x20000000 + (32*1024*1024)) // 512mb + 32mb(Core's fb)
 
 /*
@@ -3369,15 +3374,38 @@ static void video_fb_config()
 
 	int fb_scale = cfg.fb_size;
 
-	if (fb_scale <= 1)
+	// [MiSTer-DB9 BEGIN] - 1920x1200 framebuffer support:
+	//   fb_size=0 (default) preserves pre-1200p behaviour: cap at 1920x1080 so existing
+	//     setups don't silently switch to a much larger framebuffer just because the
+	//     kernel DTB was patched. Above that, /2.
+	//   fb_size=1 opts into full-resolution 1200p when the running kernel reservation
+	//     allows it (dtb_current_pixel_cap() reflects the actual /proc/device-tree
+	//     reservation; equals 1920*1080 when the DTB still says 8 MiB, e.g. right after
+	//     update_all.sh overwrote our patched zImage_dtb and we re-patched the on-disk
+	//     copy but the user hasn't rebooted yet).
+	const uint32_t fb_kernel_cap = (uint32_t)dtb_current_pixel_cap();
+	if (fb_scale == 0)
 	{
-		if (((v_cur.item[1] * v_cur.item[5]) > FB_SIZE))
+		if ((v_cur.item[1] * v_cur.item[5]) > (1920 * 1080))
 			fb_scale = 2;
 		else
 			fb_scale = 1;
 	}
+	else if (fb_scale == 1)
+	{
+		// Bound by BOTH the compile-time per-buffer mmap (FB_SIZE) and the running
+		// kernel's MiSTer_fb reservation (fb_kernel_cap). Either bound being exceeded
+		// forces /2 - otherwise a frame can overflow the userspace 3-buffer slot
+		// (e.g. mode 13 at 2048x1536 = 3.15M pixels: fits the 16 MiB kernel cap of
+		// 4.19M pixels but exceeds FB_SIZE = 1920*1200 = 2.3M, would overrun into
+		// the next buffer's slot).
+		const uint32_t bound = (FB_SIZE < fb_kernel_cap) ? (uint32_t)FB_SIZE : fb_kernel_cap;
+		if ((v_cur.item[1] * v_cur.item[5]) > bound)
+			fb_scale = 2;
+	}
 	else if (fb_scale == 3) fb_scale = 2;
 	else if (fb_scale > 4) fb_scale = 4;
+	// [MiSTer-DB9 END]
 
 	const int fb_scale_x = fb_scale;
 	const int fb_scale_y = v_cur.param.pr == 0 ? fb_scale : fb_scale * 2;

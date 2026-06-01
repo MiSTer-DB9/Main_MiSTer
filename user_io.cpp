@@ -37,6 +37,9 @@
 #include "cheats.h"
 #include "game_docs.h"
 #include "video.h"
+// [MiSTer-DB9 BEGIN] - 1920x1200 framebuffer support: reconcile MiSTer_fb DTB reservation
+#include "dtb_patcher.h"
+// [MiSTer-DB9 END]
 #include "audio.h"
 #include "shmem.h"
 #include "ide.h"
@@ -1694,6 +1697,11 @@ void user_io_init(const char *path, const char *xml)
 		bootcore_init(xml ? xml : path);
 	}
 
+	// [MiSTer-DB9 BEGIN] - 1920x1200 framebuffer support: reconcile MiSTer_fb DTB reservation
+	// with the configured VIDEO_MODE before video_init(). On-disk patch only; takes effect
+	// on the next user-initiated reboot. Safe to call repeatedly (idempotent).
+	dtb_reconcile_for_video_mode();
+	// [MiSTer-DB9 END]
 	video_init();
 	if (strlen(cfg.font)) LoadFont(cfg.font);
 	load_volume();
@@ -2843,39 +2851,83 @@ static void user_io_joyraw_check_change()
 	saturn_locked_state = locked;
 	// [MiSTer-DB9-Pro END]
 
-	// OSD-open re-detect: joy_raw[15:14] reports the FPGA probe FSM's live result
-	// while OSD is visible; mirror it into the UserIO Joystick selector so the
-	// slider tracks hot-swaps. Edge-triggered via pointer-compare on stable
-	// db9_type_name literals — one SPI write per adapter swap. SNAC/MT32-primary
-	// no-op naturally: FPGA gates probe_active off, joy_raw[15:14] echoes
-	// joy_type, so type == last_osd_writeback_type after the first tick.
-	static const char *last_osd_writeback_type = NULL;
-	if (cfg.userio_auto_select && user_io_osd_is_visible())
+	// OSD-open re-detect: joy_raw[15:14] is the FPGA probe FSM's live result while
+	// OSD is visible. A fresh DB9 button press mirrors the detected pad type into
+	// the UserIO Joystick selector so the selector always matches the hardware
+	// actually in use: it enables from Off, and it auto-corrects a wrong protocol.
+	// (Example of the latter: selector left on DB15 while a DB9MD pad is plugged
+	// in — in OSD the probe routes the real pad so nav works, but on OSD-close the
+	// selector drives gameplay, so a stale DB15 would misread the DB9MD pad. The
+	// press snaps the selector to DB9MD, matching the OSD behavior.)
+	//
+	// Gated on a fresh button press (a button bit 0-13 that changed and is now
+	// set), not the type bits alone: the FPGA detects DB9MD/Saturn by presence
+	// (D1=D0=0 signature / Saturn protocol validity), so without this an idle
+	// connected pad would flip the selector with no user action — bad for a USB
+	// user who left the adapter plugged in. So an idle pad never moves the
+	// selector; only an actual press does. To keep DB9 disabled, leave it idle
+	// (selector stays put) and pick Off via USB — a press means "use this pad".
+	// user_io_userio_select() no-ops when the selector already matches, so a
+	// matching press costs no SPI write. SNAC/MT32-primary stay quiet: joy_raw
+	// forces buttons to 0, so btn_press never asserts.
+	uint16_t btn_press = changes & joyraw & 0x3FFF;
+	if (cfg.userio_auto_select && user_io_osd_is_visible() && type && btn_press)
 	{
-		if (type && type != last_osd_writeback_type)
-		{
-			user_io_userio_select(type, /*allow_override=*/1);
-			last_osd_writeback_type = type;
+		user_io_userio_select(type, /*allow_override=*/1);
+	}
+
+	// OSD-nav injection gate: enabled iff a non-Off UserIO Joystick mode is
+	// active. status bits 125/126/127 cover joy_type in both the 2-bit
+	// [127:126] and 3-bit [127:125] forms (see the fork hazard notes),
+	// so testing the top three bits of cur_status[15] catches both layouts
+	// without a CONF_STR walk. A manual Off (joy_type=0) therefore disables
+	// nav even under userio_auto_select — that's the contract: Off means off.
+	// Under auto-select, the button-gated writeback above sets the selector
+	// non-Off on the first DB9 press; user_io_status_set() updates cur_status[]
+	// synchronously, and it runs before this gate, so that same press both
+	// selects the mode and enables nav (no chicken-and-egg).
+	// The menu (boot) core has no UserIO Joystick selector to opt in through,
+	// and its FPGA-side autodetect always runs, so injection is always on there
+	// (matches the MiSTer.ini contract).
+	//
+	// Minimig (Amiga) and AtariST have no CONF_STR; their UserIO Joystick
+	// selector lives in a separate ext-config register (bits [31:30]), not in
+	// cur_status, so the cur_status[15] test above never sees it. Check those
+	// registers explicitly so a manually-picked DB9MD/DB15 mode enables nav.
+	static int prev_inject_enabled = 0;
+	int inject_enabled = is_menu()
+		|| (((uint8_t)cur_status[15] & 0xE0) != 0)
+		|| (is_minimig() && ((minimig_get_extcfg() >> 30) & 3))
+		|| (is_st()      && ((tos_get_extctrl()  >> 30) & 3));
+
+	// Held-key release on transition: if the gate just flipped to disabled
+	// while DB9 buttons are held, walk the previous joyraw and release the
+	// matching keys so no scancode stays stuck in input_joyraw_kbd's state.
+	if (prev_inject_enabled && !inject_enabled && (joyraw_bits & 0x3FFF)) {
+		uint16_t held = joyraw_bits & 0x3FFF;
+		while (held) {
+			int i = __builtin_ctz(held);
+			input_joyraw_kbd(joyraw_mapping[i], 0);
+			held &= held - 1;
 		}
 	}
-	else
-	{
-		last_osd_writeback_type = NULL;
-	}
+	prev_inject_enabled = inject_enabled;
 
-	// Iterate only over changed button bits (0-13) via ctz; usually 0 or 1 iterations.
-	changes &= 0x3FFF; // mask to button bits only, exclude type bits 15-14
-	while (changes) {
-		int i = __builtin_ctz(changes);
+	if (inject_enabled) {
+		// Iterate only over changed button bits (0-13) via ctz; usually 0 or 1 iterations.
+		changes &= 0x3FFF; // mask to button bits only, exclude type bits 15-14
+		while (changes) {
+			int i = __builtin_ctz(changes);
 
-		// Determine if this was a Press (1) or Release (0)
-		// We check the *current* joyraw state at that bit index
-		int is_pressed = (joyraw >> i) & 1;
+			// Determine if this was a Press (1) or Release (0)
+			// We check the *current* joyraw state at that bit index
+			int is_pressed = (joyraw >> i) & 1;
 
-		input_joyraw_kbd(joyraw_mapping[i], is_pressed);
+			input_joyraw_kbd(joyraw_mapping[i], is_pressed);
 
-		// Clear the lowest set bit so we can find the next one
-		changes &= changes - 1;
+			// Clear the lowest set bit so we can find the next one
+			changes &= changes - 1;
+		}
 	}
 
 	// Update history
