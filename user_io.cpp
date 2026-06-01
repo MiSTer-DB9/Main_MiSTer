@@ -3729,7 +3729,7 @@ void user_io_poll()
 						done = 1;
 						buffer_lba[disk] = lba;
 					}
-					else if (blksz == (2352 + 24) && is_cdi())
+					else if (blksz == CDI_CDIC_BUFFER_SIZE && is_cdi())
 					{
 						diskled_on();
 						cdi_read_cd(buffer[disk], lba, buf_n);
@@ -3817,7 +3817,7 @@ void user_io_poll()
 						psx_read_cd(buffer[disk], lba, buf_n);
 						buffer_lba[disk] = lba;
 					}
-					else if (blksz == (2352 + 24) && is_cdi())
+					else if (blksz == CDI_CDIC_BUFFER_SIZE && is_cdi())
 					{
 						cdi_read_cd(buffer[disk], lba, buf_n);
 						buffer_lba[disk] = lba;
