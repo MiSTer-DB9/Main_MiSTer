@@ -1075,24 +1075,33 @@ void build_advanced_map_summary(advancedButtonMap *abm, char *dest_str, size_t d
 
 // [MiSTer-DB9-Pro BEGIN] - hide Saturn from "UserIO Joystick" cycle when key locked
 // Caller is the OSD render path and the +/-/select cycle handler; not the
-// controller-input hot path. Predicate scans the option's value list once
-// (substrcpy stops at the first empty slot, mirroring user_io_auto_db9).
+// controller-input hot path. Returns 1 only when value index `idx` of the
+// UserIO Joystick option resolves to "Saturn".
 static int db9_locked_skip_value(const char *opt_entry, uint32_t idx)
 {
 	if (db9_key_saturn_unlocked()) return 0;
 	if (!opt_entry || (opt_entry[0] != 'O' && opt_entry[0] != 'o')) return 0;
 
-	char val[256];
-	int has_saturn = 0;
-	for (int vi = 2; ; vi++)
-	{
-		if (!substrcpy(val, opt_entry, vi)) break;
-		if (!strcmp(val, "Saturn")) { has_saturn = 1; break; }
-	}
-	if (!has_saturn) return 0;
+	// Scope to the UserIO Joystick selector only, so a value literally named
+	// "Saturn" in some unrelated O/o option is never skipped.
+	char label[256];
+	substrcpy(label, opt_entry, 1);
+	if (strcmp(label, "UserIO Joystick") != 0 && strcmp(label, "User port") != 0) return 0;
 
+	char val[256];
 	substrcpy(val, opt_entry, 2 + idx);
 	return !strcmp(val, "Saturn");
+}
+
+// Next UserIO Joystick value for the ext-config cores (AtariST / Minimig), which
+// store the selector in extcfg[31:30] rather than CONF_STR. Cycles 0..3
+// (Off,Saturn,DB9MD,DB15), skipping the Saturn slot when the key is locked — the
+// ext-config analogue of db9_locked_skip_value on CONF_STR cores.
+static int db9_extcfg_userio_next(int cur, int minus)
+{
+	int v = (cur + (minus ? 3 : 1)) & 3;
+	if (v == 1 && !db9_key_saturn_unlocked()) v = (v + (minus ? 3 : 1)) & 3;
+	return v;
 }
 // [MiSTer-DB9-Pro END]
 
@@ -2465,24 +2474,17 @@ void HandleUI(void)
 							if (byarm && is_x86() && p[1] == '2') x86_set_fdd_boot(!(x & 1));
 
 							// check if next value available
-							// [MiSTer-DB9-Pro BEGIN] - skip Saturn slot when key locked
-							if (minus)
+							// [MiSTer-DB9-Pro BEGIN] - skip Saturn slot when key locked.
+							// Bounded to mask+1 steps: every value index is visited at
+							// most once, so a malformed option with no valid stop can't
+							// spin HandleUI forever (well-formed options break early at
+							// the first valid value).
+							int cyc_dir = minus ? -1 : 1;
+							for (uint32_t guard = mask + 1; guard; guard--)
 							{
-								while(1)
-								{
-									substrcpy(s, p, 2 + x);
-									if (strlen(s) && get_arc(s) >= 0 && !db9_locked_skip_value(p, x)) break;
-									x = (x - 1) & mask;
-								}
-							}
-							else
-							{
-								while(1)
-								{
-									substrcpy(s, p, 2 + x);
-									if (strlen(s) && get_arc(s) >= 0 && !db9_locked_skip_value(p, x)) break;
-									x = (x + 1) & mask;
-								}
+								substrcpy(s, p, 2 + x);
+								if (strlen(s) && get_arc(s) >= 0 && !db9_locked_skip_value(p, x)) break;
+								x = (x + cyc_dir) & mask;
 							}
 							// [MiSTer-DB9-Pro END]
 
@@ -4966,7 +4968,7 @@ void HandleUI(void)
 			case 16:
 				{
 					// Saturn first after Off to prevent ghost inputs from MD select line
-					int uio_joy = (((tos_get_extctrl() >> 30) & 3) + (minus ? 3 : 1)) & 3;
+					int uio_joy = db9_extcfg_userio_next((tos_get_extctrl() >> 30) & 3, minus);
 					tos_set_extctrl((tos_get_extctrl() & ~0xC0000000u) | ((uint32_t)uio_joy << 30));
 					menustate = MENU_ST_SYSTEM1;
 				}
@@ -6387,7 +6389,7 @@ void HandleUI(void)
 			else if (menusub == 7)
 			{
 				// Saturn first after Off to prevent ghost inputs from MD select line
-				int uio_joy = (((minimig_get_extcfg() >> 30) & 3) + (minus ? 3 : 1)) & 3;
+				int uio_joy = db9_extcfg_userio_next((minimig_get_extcfg() >> 30) & 3, minus);
 				minimig_set_extcfg((minimig_get_extcfg() & ~0xC0000000u) | ((uint32_t)uio_joy << 30));
 				menustate = MENU_MINIMIG_CHIPSET1;
 			}

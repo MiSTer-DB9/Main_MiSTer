@@ -1459,6 +1459,59 @@ const char *db9_type_name(int val)
 }
 // [MiSTer-DB9 END]
 
+// [MiSTer-DB9 BEGIN] - shared lookup for the "UserIO Joystick" selector option
+// Single source of truth for the three callers below (clamp / select / value
+// query). Locates the core's "UserIO Joystick" (or legacy "User port") CONF_STR
+// option, copies the status spec after the O/o into opt_buf and sets *ex_out.
+// Returns the confstr item string, or NULL when the core has no such option.
+// Keeping the prefix-parse in one place stops the callers from drifting apart.
+static char *db9_find_userio_joy_opt(char *opt_buf, size_t opt_buf_sz, int *ex_out)
+{
+	for (int i = 2; ; i++)
+	{
+		char *item = user_io_get_confstr(i);
+		if (!item) break;
+		if (!item[0]) continue;
+
+		char label[256];
+		substrcpy(label, item, 1);
+		if (strcmp(label, "UserIO Joystick") != 0 && strcmp(label, "User port") != 0) continue;
+
+		char prefix[256];
+		substrcpy(prefix, item, 0);
+		char *p = prefix;
+		while ((*p == 'H' || *p == 'D' || *p == 'h' || *p == 'd') && strlen(p) >= 2) p += 2;
+		if (*p == 'P') p += 2;
+		if (*p != 'O' && *p != 'o') return NULL;
+
+		*ex_out = (*p == 'o') ? 1 : 0;
+		char *opt = (p[1] == 'X') ? (p + 2) : (p + 1);
+		if (!*opt) return NULL;
+
+		snprintf(opt_buf, opt_buf_sz, "%s", opt);
+		return item;
+	}
+	return NULL;
+}
+
+// Current "UserIO Joystick" selector value for this core, independent of which
+// status bits the core parks joy_type in: CONF_STR cores via the named option
+// (so [127:126], [63:62], [49:48], ... all resolve), Minimig/AtariST via their
+// ext-config [31:30] field. 0 = Off/none. Used to gate joy_raw OSD-nav injection
+// without hard-coding a status bit position (the old cur_status[15] byte test
+// silently missed cores whose joy_type lives outside [127:126]).
+static uint32_t user_io_userio_joy_value()
+{
+	if (is_minimig()) return (minimig_get_extcfg() >> 30) & 3;
+	if (is_st())      return (tos_get_extctrl()  >> 30) & 3;
+
+	char opt[256];
+	int ex;
+	if (!db9_find_userio_joy_opt(opt, sizeof(opt), &ex)) return 0;
+	return user_io_status_get(opt, ex);
+}
+// [MiSTer-DB9 END]
+
 // [MiSTer-DB9-Pro BEGIN] - clamp persisted Saturn UserIO selection when key locked
 // Called after the per-core saved config has been loaded into cur_status[].
 // If db9pro.key is missing/invalid and the Saturn-aware "UserIO Joystick"
@@ -1470,36 +1523,18 @@ static void db9_clamp_saturn_if_locked()
 {
 	if (db9_key_saturn_unlocked()) return;
 
-	for (int i = 2; ; i++)
+	char opt[256];
+	int ex;
+	char *item = db9_find_userio_joy_opt(opt, sizeof(opt), &ex);
+	if (!item) return;
+
+	uint32_t cur = user_io_status_get(opt, ex);
+	char val[256];
+	substrcpy(val, item, 2 + cur);
+	if (!strcmp(val, "Saturn"))
 	{
-		char *item = user_io_get_confstr(i);
-		if (!item) break;
-		if (!item[0]) continue;
-
-		char label[256];
-		substrcpy(label, item, 1);
-		if (strcmp(label, "UserIO Joystick") != 0) continue;
-
-		char prefix[256];
-		substrcpy(prefix, item, 0);
-		char *p = prefix;
-		while ((*p == 'H' || *p == 'D' || *p == 'h' || *p == 'd') && strlen(p) >= 2) p += 2;
-		if (*p == 'P') p += 2;
-		if (*p != 'O' && *p != 'o') break;
-
-		int ex = (*p == 'o') ? 1 : 0;
-		char *opt = (p[1] == 'X') ? (p + 2) : (p + 1);
-		if (!*opt) break;
-
-		uint32_t cur = user_io_status_get(opt, ex);
-		char val[256];
-		substrcpy(val, item, 2 + cur);
-		if (!strcmp(val, "Saturn"))
-		{
-			user_io_status_set(opt, 0, ex);
-			printf("DB9: clamping locked Saturn UserIO selection to Off\n");
-		}
-		break;
+		user_io_status_set(opt, 0, ex);
+		printf("DB9: clamping locked Saturn UserIO selection to Off\n");
 	}
 }
 // [MiSTer-DB9-Pro END]
@@ -1515,46 +1550,26 @@ static void user_io_userio_select(const char *type, int allow_override)
 	if (!db9_key_saturn_unlocked() && !strcmp(type, "Saturn")) return;
 	// [MiSTer-DB9-Pro END]
 
-	for (int i = 2; ; i++)
+	char opt[256];
+	int ex;
+	char *item = db9_find_userio_joy_opt(opt, sizeof(opt), &ex);
+	if (!item) return;
+
+	uint32_t cur = user_io_status_get(opt, ex);
+	if (!allow_override && cur != 0) return; // boot path: already set, don't override
+
+	// Find matching option value
+	for (int vi = 2; ; vi++)
 	{
-		char *item = user_io_get_confstr(i);
-		if (!item) break;
-		if (!item[0]) continue;
-
-		char label[256];
-		substrcpy(label, item, 1);
-		if (strcmp(label, "UserIO Joystick") != 0 && strcmp(label, "User port") != 0) continue;
-
-		// Strip H/D/h/d and P prefixes to find the O/o character
-		char prefix[256];
-		substrcpy(prefix, item, 0);
-		char *p = prefix;
-		while ((*p == 'H' || *p == 'D' || *p == 'h' || *p == 'd') && strlen(p) >= 2) p += 2;
-		if (*p == 'P') p += 2;
-
-		if (*p != 'O' && *p != 'o') break;
-
-		int ex = (*p == 'o') ? 1 : 0;
-		char *opt = (p[1] == 'X') ? (p + 2) : (p + 1);
-		if (!*opt) break;
-
-		uint32_t cur = user_io_status_get(opt, ex);
-		if (!allow_override && cur != 0) break; // boot path: already set, don't override
-
-		// Find matching option value
-		for (int vi = 2; ; vi++)
+		char val[256];
+		if (!substrcpy(val, item, vi)) break;
+		if (strstr(val, type))
 		{
-			char val[256];
-			if (!substrcpy(val, item, vi)) break;
-			if (strstr(val, type))
-			{
-				if ((uint32_t)(vi - 2) == cur) break; // no-op (avoid SPI write spam)
-				user_io_status_set(opt, vi - 2, ex);
-				printf("%s %s for %s\n", allow_override ? "OSD re-detect:" : "Auto-enabling", type, label);
-				break;
-			}
+			if ((uint32_t)(vi - 2) == cur) break; // no-op (avoid SPI write spam)
+			user_io_status_set(opt, vi - 2, ex);
+			printf("%s %s for UserIO Joystick\n", allow_override ? "OSD re-detect:" : "Auto-enabling", type);
+			break;
 		}
-		break;
 	}
 }
 
@@ -2801,14 +2816,24 @@ static void user_io_joyraw_check_change()
 	// USER_OSD (Start+C -> sys_top deb_osd). Level-based reconcile runs every poll
 	// (before the no-change early-out) so context transitions release stale keys
 	// even without a DB9 button edge.
-	int inject_enabled = is_menu()
-		|| (((uint8_t)cur_status[15] & 0xE0) != 0)
-		|| (is_minimig() && ((minimig_get_extcfg() >> 30) & 3))
-		|| (is_st()      && ((tos_get_extctrl()  >> 30) & 3));
+	// Inject only in a menu-like context AND when a UserIO Joystick mode is active.
+	// full_inject is tested first so the selector query (which walks CONF_STR) is
+	// short-circuited away during gameplay — the common case, OSD closed. The
+	// selector is resolved via its CONF_STR option (or Minimig/AtariST ext-config)
+	// rather than a fixed status byte, so cores that park joy_type outside
+	// [127:126] (e.g. [63:62] on TI-99/AY-3-8500/Gyruss, [49:48] on
+	// PrehistoricIsle) still get DB9 OSD-nav injection.
 	int full_inject = is_menu() || user_io_osd_is_visible() || video_fb_state();
+	int inject_enabled = full_inject && (is_menu() || (user_io_userio_joy_value() != 0));
 
 	static uint16_t inj_down = 0; // buttons currently injected as down
-	uint16_t target = (inject_enabled && full_inject) ? (joyraw & 0x3FFF) : 0;
+	uint16_t target = inject_enabled ? (joyraw & 0x3FFF) : 0;
+	// Bits 11 (DB9MD Mode) and 13 (Saturn R_trigger) both map to KEY_GRAVE. The
+	// reconcile tracks held bits, not keycodes, so if both are down and one
+	// releases it would drop KEY_GRAVE while the other still holds it (a
+	// simultaneous press would also emit GRAVE twice). Fold 13 into 11 so the
+	// shared OSD-toggle key has a single source bit.
+	if (target & 0x2000) target = (target | 0x0800) & ~0x2000;
 	// Release first (bits leaving the held/allowed set), then press the new ones.
 	uint16_t rel = inj_down & ~target;
 	while (rel) { int i = __builtin_ctz(rel); input_joyraw_kbd(joyraw_mapping[i], 0); rel &= rel - 1; }
