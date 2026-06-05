@@ -143,7 +143,11 @@ void db9_key_refresh(void)
 	}
 
 	time_t now = time(NULL);
-	if ((time_t)k.expiry_unix < now) {
+	// expiry_unix is uint32 (valid through 2106). time_t is 32-bit signed on the
+	// arm32 target, so (time_t)expiry_unix would go negative past 2038-01-19 and
+	// a still-valid future key would compare as already expired. Widen both sides
+	// to int64 so the full uint32 range is honored.
+	if ((int64_t)(uint32_t)k.expiry_unix < (int64_t)now) {
 		printf("[DB9-Key v1.5] locked: key expired (expiry=%u, now=%lld)\n",
 		       k.expiry_unix, (long long)now);
 		return;
