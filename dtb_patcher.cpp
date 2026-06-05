@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "cfg.h"
 
@@ -238,9 +239,9 @@ static int repatch_dtb_reg(uint32_t new_size)
 	         "fdtput -t x %s /MiSTer_fb reg 0x%x 0x%x",
 	         DTB_TMP_PATH, FB_REG_BASE, new_size);
 	int ret = system(cmd);
-	if (ret != 0)
+	if (ret == -1 || !WIFEXITED(ret) || WEXITSTATUS(ret) != 0)
 	{
-		printf("DTB: fdtput failed (rc=%d).\n", ret);
+		printf("DTB: fdtput failed (rc=%d).\n", WIFEXITED(ret) ? WEXITSTATUS(ret) : ret);
 		free(dtb);
 		unlink(DTB_TMP_PATH);
 		return -1;
