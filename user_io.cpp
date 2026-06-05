@@ -2792,7 +2792,32 @@ static void user_io_joyraw_check_change()
 	// XOR detects changes across all 16 bits (14 buttons at [13:0] + 2 type at [15:14]).
 	uint16_t changes = (joyraw ^ joyraw_bits) & 0xFFFF;
 
-	// If nothing changed, we are done. No loop, no branches.
+	// --- joy_raw -> keyboard injection (OSD / menu / script navigation) ---------
+	// joy_raw ORs BOTH players into bits [13:0], so injecting it as keyboard during
+	// gameplay ghosts 2P directions onto 1P on jtframe cores (arrow keys -> P1).
+	// Restrict to menu-like contexts (OSD overlay, boot core, framebuffer/Scripts)
+	// where there is no core to receive the pad directly; during gameplay the pad
+	// reaches the core via the FPGA joydb/joymux path and OSD opens via hardware
+	// USER_OSD (Start+C -> sys_top deb_osd). Level-based reconcile runs every poll
+	// (before the no-change early-out) so context transitions release stale keys
+	// even without a DB9 button edge.
+	int inject_enabled = is_menu()
+		|| (((uint8_t)cur_status[15] & 0xE0) != 0)
+		|| (is_minimig() && ((minimig_get_extcfg() >> 30) & 3))
+		|| (is_st()      && ((tos_get_extctrl()  >> 30) & 3));
+	int full_inject = is_menu() || user_io_osd_is_visible() || video_fb_state();
+
+	static uint16_t inj_down = 0; // buttons currently injected as down
+	uint16_t target = (inject_enabled && full_inject) ? (joyraw & 0x3FFF) : 0;
+	// Release first (bits leaving the held/allowed set), then press the new ones.
+	uint16_t rel = inj_down & ~target;
+	while (rel) { int i = __builtin_ctz(rel); input_joyraw_kbd(joyraw_mapping[i], 0); rel &= rel - 1; }
+	uint16_t pr  = target & ~inj_down;
+	while (pr)  { int i = __builtin_ctz(pr);  input_joyraw_kbd(joyraw_mapping[i], 1); pr  &= pr  - 1; }
+	inj_down = target;
+
+	// The remaining work (pad-type detection, shm, auto-select) only needs to run
+	// on an actual joy_raw edge.
 	if (changes == 0) {
 		return;
 	}
@@ -2842,60 +2867,6 @@ static void user_io_joyraw_check_change()
 	if (cfg.userio_auto_select && user_io_osd_is_visible() && type && btn_press)
 	{
 		user_io_userio_select(type, /*allow_override=*/1);
-	}
-
-	// OSD-nav injection gate: enabled iff a non-Off UserIO Joystick mode is
-	// active. status bits 125/126/127 cover joy_type in both the 2-bit
-	// [127:126] and 3-bit [127:125] forms (see hazards/status-in-truncation.md),
-	// so testing the top three bits of cur_status[15] catches both layouts
-	// without a CONF_STR walk. A manual Off (joy_type=0) therefore disables
-	// nav even under userio_auto_select — that's the contract: Off means off.
-	// Under auto-select, the button-gated writeback above sets the selector
-	// non-Off on the first DB9 press; user_io_status_set() updates cur_status[]
-	// synchronously, and it runs before this gate, so that same press both
-	// selects the mode and enables nav (no chicken-and-egg).
-	// The menu (boot) core has no UserIO Joystick selector to opt in through,
-	// and its FPGA-side autodetect always runs, so injection is always on there
-	// (matches the MiSTer.ini contract).
-	//
-	// Minimig (Amiga) and AtariST have no CONF_STR; their UserIO Joystick
-	// selector lives in a separate ext-config register (bits [31:30]), not in
-	// cur_status, so the cur_status[15] test above never sees it. Check those
-	// registers explicitly so a manually-picked DB9MD/DB15 mode enables nav.
-	static int prev_inject_enabled = 0;
-	int inject_enabled = is_menu()
-		|| (((uint8_t)cur_status[15] & 0xE0) != 0)
-		|| (is_minimig() && ((minimig_get_extcfg() >> 30) & 3))
-		|| (is_st()      && ((tos_get_extctrl()  >> 30) & 3));
-
-	// Held-key release on transition: if the gate just flipped to disabled
-	// while DB9 buttons are held, walk the previous joyraw and release the
-	// matching keys so no scancode stays stuck in input_joyraw_kbd's state.
-	if (prev_inject_enabled && !inject_enabled && (joyraw_bits & 0x3FFF)) {
-		uint16_t held = joyraw_bits & 0x3FFF;
-		while (held) {
-			int i = __builtin_ctz(held);
-			input_joyraw_kbd(joyraw_mapping[i], 0);
-			held &= held - 1;
-		}
-	}
-	prev_inject_enabled = inject_enabled;
-
-	if (inject_enabled) {
-		// Iterate only over changed button bits (0-13) via ctz; usually 0 or 1 iterations.
-		changes &= 0x3FFF; // mask to button bits only, exclude type bits 15-14
-		while (changes) {
-			int i = __builtin_ctz(changes);
-
-			// Determine if this was a Press (1) or Release (0)
-			// We check the *current* joyraw state at that bit index
-			int is_pressed = (joyraw >> i) & 1;
-
-			input_joyraw_kbd(joyraw_mapping[i], is_pressed);
-
-			// Clear the lowest set bit so we can find the next one
-			changes &= changes - 1;
-		}
 	}
 
 	// Update history
