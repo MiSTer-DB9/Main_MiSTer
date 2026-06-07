@@ -58,7 +58,7 @@ static int sgets(char *out, int sz, char **in)
 
 int p3docdd_t::LoadCUE(const char* filename) {
 	static char fname[1024 + 10];
-	static char line[128];
+	static char line[256];
 	char *ptr, *lptr;
 	static char cue[100 * 1024];
 	int new_file = 0;
@@ -97,12 +97,12 @@ int p3docdd_t::LoadCUE(const char* filename) {
 			if (*lptr == '\"')
 			{
 				lptr++;
-				while ((*lptr != '\"') && (lptr <= (line + 128)) && (ptr < (fname + 1023)))
+				while ((*lptr != '\"') && (lptr <= (line + 256)) && (ptr < (fname + 1023)))
 					*ptr++ = *lptr++;
 			}
 			else
 			{
-				while ((*lptr != 0x20) && (lptr <= (line + 128)) && (ptr < (fname + 1023)))
+				while ((*lptr != 0x20) && (lptr <= (line + 256)) && (ptr < (fname + 1023)))
 					*ptr++ = *lptr++;
 			}
 			*ptr = 0;
@@ -453,6 +453,10 @@ int p3docdd_t::GetDiscInfo(uint8_t *buf) {
 		buf[offs + 7] = msf.f;    //frames
 		buf[offs + 8] = 0;
 	}
+
+	this->lba = 0;
+	ReadData(cd_buf);
+	memcpy(buf+1024, cd_buf, 128);
 
 	return 1;
 }
