@@ -21,6 +21,7 @@
 #include "input.h"
 #include "autofire.h"
 #include "user_io.h"
+#include "db9_map.h"
 #include "menu.h"
 #include "hardware.h"
 #include "cfg.h"
@@ -1868,6 +1869,72 @@ static char *get_kbdmap_name(int dev)
 	sprintfz(name, "kbd_%s.map", id);
 	return name;
 }
+
+// [MiSTer-DB9 BEGIN] - programmable DB9 button-remap matrix: per-core/per-devtype map file
+static const char *db9_devtype_tag(int devtype)
+{
+	switch (devtype)
+	{
+	case DB9_DEV_SATURN: return "saturn";
+	case DB9_DEV_DB9MD:  return "db9md";
+	case DB9_DEV_DB15:   return "db15";
+	default:             return "off";
+	}
+}
+
+static char *get_db9map_name(int devtype)
+{
+	static char name[256];
+	sprintfz(name, "%s_db9map_%s_v1.map", user_io_get_core_name(), db9_devtype_tag(devtype));
+	return name;
+}
+
+// True only for the three real DB9 device types; the remap table is meaningless
+// for Off (devtype 0) so apply/save are no-ops there.
+static bool db9_devtype_is_real(int devtype)
+{
+	return devtype == DB9_DEV_SATURN || devtype == DB9_DEV_DB9MD || devtype == DB9_DEV_DB15;
+}
+
+// Load the active core's saved DB9 layout for `devtype` into `map`, or the
+// factory default when no .map exists. No streaming.
+void db9_map_load(int devtype, uint8_t *map)
+{
+	if (load_map(get_db9map_name(devtype), map, DB9_MAP_SLOTS) != DB9_MAP_SLOTS)
+		db9_map_factory_default(devtype, map);
+}
+
+// Load the active core's saved DB9 layout for `devtype` (or the factory
+// default if none) and stream it to the FPGA matrix. OSD-time only; called on
+// core load, DB9 device-type change, and after the "Define DB9 buttons" flow.
+void db9_map_apply(int devtype)
+{
+	if (!db9_devtype_is_real(devtype)) return;
+
+	uint8_t map[DB9_MAP_SLOTS];
+	db9_map_load(devtype, map);
+	db9_map_stream(map);
+}
+
+// Persist a user-defined DB9 layout for `devtype` and push it to the FPGA.
+// Called by the "Define DB9 buttons" OSD flow on completion.
+void db9_map_save(int devtype, const uint8_t *map)
+{
+	if (!db9_devtype_is_real(devtype)) return;
+	save_map(get_db9map_name(devtype), (void *)map, DB9_MAP_SLOTS);
+	db9_map_stream(map);
+}
+
+// Reset the active core's DB9 layout for `devtype` to factory default: delete
+// the saved .map override so the CONF_STR-derived layout takes over, then
+// re-stream it. Mirrors the USB "Reset to default" (physical User-button hold).
+void db9_map_reset(int devtype)
+{
+	if (!db9_devtype_is_real(devtype)) return;
+	delete_map(get_db9map_name(devtype));
+	db9_map_apply(devtype);
+}
+// [MiSTer-DB9 END]
 
 void finish_map_setting(int dismiss)
 {

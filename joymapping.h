@@ -11,4 +11,13 @@ void map_joystick(uint32_t *map, uint32_t *mmap);
 void map_joystick_show(uint32_t *map, uint32_t *mmap, int num);
 int map_paddle_btn();
 
+// [MiSTer-DB9 BEGIN] - expose the gamepad_defaults-resolved per-slot default
+// button name so db9_map.cpp can derive the DB9 factory layout from the core's
+// CONF_STR J1/jn/jp (same data the USB mapper uses). Additive accessors only --
+// map_joystick()/read_buttons() are untouched.
+void        db9_read_default_names();      // refresh from CONF_STR (calls read_buttons)
+int         db9_default_name_count();      // joy_count
+const char *db9_default_name(int i);       // jp name if gamepad_defaults else jn name
+// [MiSTer-DB9 END]
+
 #endif // JOYMAPPING_H

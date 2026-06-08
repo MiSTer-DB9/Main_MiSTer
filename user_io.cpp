@@ -1516,7 +1516,7 @@ static char *db9_find_userio_joy_opt(char *opt_buf, size_t opt_buf_sz, int *ex_o
 // ext-config [31:30] field. 0 = Off/none. Used to gate joy_raw OSD-nav injection
 // without hard-coding a status bit position (the old cur_status[15] byte test
 // silently missed cores whose joy_type lives outside [127:126]).
-static uint32_t user_io_userio_joy_value()
+uint32_t user_io_userio_joy_value()
 {
 	if (is_minimig()) return (minimig_get_extcfg() >> 30) & 3;
 	if (is_st())      return (tos_get_extctrl()  >> 30) & 3;
@@ -1593,6 +1593,27 @@ static void user_io_auto_db9()
 {
 	user_io_userio_select(db9_shm_read(), /*allow_override=*/0);
 }
+
+// Set by user_io_init() so the next joy_raw poll re-streams the new core's
+// programmable remap table even if the DB9 device type didn't change across
+// the core switch.
+static int db9_map_pending = 1;
+
+// Set by the "Define DB9 buttons" OSD page (menu.cpp) while it is capturing
+// physical presses, so the joy_raw->keyboard nav injection below is suppressed
+// (the page reads raw bits directly instead of seeing them as cursor keys).
+int db9_map_define_active = 0;
+
+// Read the live DB9/DB15/Saturn button field (joy_raw[13:0], both players ORed)
+// straight from the FPGA. OSD-time helper for the define-buttons page; NOT used
+// in the gameplay path.
+uint16_t user_io_joyraw_buttons(void)
+{
+	spi_uio_cmd_cont(UIO_USERIO_GET);
+	uint16_t joyraw = spi_w(0);
+	DisableIO();
+	return joyraw & 0x3FFF;
+}
 // [MiSTer-DB9 END]
 
 void user_io_init(const char *path, const char *xml)
@@ -1605,6 +1626,11 @@ void user_io_init(const char *path, const char *xml)
 	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (refresh streams 40B SPI on success)
 	db9_key_refresh();
 	// [MiSTer-DB9-Pro END]
+
+	// [MiSTer-DB9 BEGIN] - programmable button-remap matrix: re-stream this
+	// core's saved layout on the next joy_raw poll (devtype not yet known here).
+	db9_map_pending = 1;
+	// [MiSTer-DB9 END]
 
 	// Clean up old game ID when loading a new core
 	unlink("/tmp/GAMEID");
@@ -2896,7 +2922,9 @@ static void user_io_joyraw_check_change()
 	// first press from Off both selects the mode and enables nav. Do not reorder
 	// the auto-select below this gate (that is exactly the c6b6211 regression).
 	int full_inject = is_menu() || user_io_osd_is_visible() || video_fb_state();
-	int inject_enabled = full_inject && (is_menu() || (user_io_userio_joy_value() != 0));
+	// While the "Define DB9 buttons" page is capturing presses, suppress nav
+	// injection so DB9 buttons are recorded raw instead of moving the cursor.
+	int inject_enabled = full_inject && !db9_map_define_active && (is_menu() || (user_io_userio_joy_value() != 0));
 
 	static uint16_t inj_down = 0; // buttons currently injected as down
 	uint16_t target = inject_enabled ? (joyraw & 0x3FFF) : 0;
@@ -2912,6 +2940,23 @@ static void user_io_joyraw_check_change()
 	uint16_t pr  = target & ~inj_down;
 	while (pr)  { int i = __builtin_ctz(pr);  input_joyraw_kbd(joyraw_mapping[i], 1); pr  &= pr  - 1; }
 	inj_down = target;
+
+	// Programmable button-remap matrix: (re)stream this core's saved layout for the
+	// active DB9 device type once per core-load or device-type change. Placed BEFORE
+	// the changes==0 early-out below so a freshly-loaded core whose pad is idle still
+	// gets its selector table -- otherwise the FPGA keeps the previous core's (or the
+	// reset) map until the first button edge. Not the gameplay path: input reaches
+	// the core FPGA-direct via joydb; this is the ~20Hz Main_MiSTer housekeeping poll
+	// and the guard fires the (file + CONF_STR) apply exactly once per load/device
+	// change. devtype matches joy_raw[15:14] (1=Saturn,2=DB9MD,3=DB15); ignores Off.
+	int devtype = (joyraw >> 14) & 3;
+	static int last_map_devtype = 0;
+	if (devtype && (db9_map_pending || devtype != last_map_devtype))
+	{
+		db9_map_apply(devtype);
+		last_map_devtype = devtype;
+		db9_map_pending = 0;
+	}
 
 	// The remaining work (shm save, Saturn-locked alert) only needs to run on an
 	// actual joy_raw edge.

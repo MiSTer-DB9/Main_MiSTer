@@ -54,6 +54,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "fpga_io.h"
 #include "cfg.h"
 #include "input.h"
+#include "db9_map.h"
 #include "battery.h"
 #include "cheats.h"
 #include "game_docs.h"
@@ -116,6 +117,12 @@ enum MENU
 	MENU_JOYRESET1,
 	MENU_JOYKBDMAP,
 	MENU_JOYKBDMAP1,
+	// [MiSTer-DB9 BEGIN] - programmable DB9 button-remap define page
+	MENU_DB9MAP,
+	MENU_DB9MAP1,
+	MENU_DB9RESET,
+	MENU_DB9RESET1,
+	// [MiSTer-DB9 END]
 	MENU_KBDMAP,
 	MENU_KBDMAP1,
 	MENU_KBDMAP2,
@@ -250,6 +257,29 @@ const char *config_joystick_mode[] = { "Digital", "Analog", "CD32", "Analog" };
 const char *config_button_turbo_msg[] = { "OFF", "FAST", "MEDIUM", "SLOW" };
 const char *config_button_turbo_choice_msg[] = { "A only", "B only", "A & B" };
 const char *joy_button_map[] = { "RIGHT", "LEFT", "DOWN", "UP", "BUTTON A", "BUTTON B", "BUTTON X", "BUTTON Y", "BUTTON L", "BUTTON R", "SELECT", "START", "KBD TOGGLE", "MENU", "    Stick 1: Tilt RIGHT", "    Stick 1: Tilt DOWN", "   Mouse emu X: Tilt RIGHT", "   Mouse emu Y: Tilt DOWN" };
+
+// [MiSTer-DB9 BEGIN] - "Define DB9 buttons" page state (MENU_DB9MAP*)
+static int     db9map_devtype   = 0;            // DB9_DEV_* of the active UserIO mode
+static int     db9map_slot      = 0;            // standard output slot being defined
+static int     db9map_nslots    = 0;            // total slots to walk (DPAD + J1 buttons)
+static int     db9map_drawn     = -1;           // last slot whose prompt was drawn
+static uint16_t db9map_prev     = 0;            // previous joy_raw buttons (edge detect)
+static uint8_t db9map_work[DB9_MAP_SLOTS];      // layout under construction
+// The DB9 pad drives Undefine/Cancel through its own OSD chord (Start+C, the same
+// USER_OSD = joydb_1[10] & joydb_1[6] that opens the OSD), so a TAP = Undefine and
+// a HOLD = Cancel -- exactly how the USB "Define buttons" page uses the controller's
+// own OSD-combo (input.cpp osd_combo/osd_timer). The chord is reserved from capture.
+#define DB9MAP_OSD_COMBO 0x0440                  // Start (bit10) | C (bit6)
+static unsigned long db9map_combo_to = 0;       // combo-hold expiry timer
+static int      db9map_combo_armed = 0;         // a Start+C chord is in progress
+static int      db9map_combo_fired = 0;         // hold-cancel already latched this chord
+static int      db9map_usr_was  = 0;            // board User button held last frame
+static unsigned long db9map_usr_to = 0;         // board User-hold expiry timer
+static int      db9map_usr_fired = 0;           // User tap/hold consumed (or open-press ignored)
+static int      db9map_guard    = 0;            // swallow the keypress that opened the page
+#define DB9MAP_HOLD_MS  1000                     // Start+C combo-hold -> Cancel (matches USB osd_timer GetTimer(1000), input.cpp)
+#define DB9MAP_RESET_MS 1500                     // board User-hold -> Reset to default (matches USB menu_key_get GetTimer(1500))
+// [MiSTer-DB9 END]
 const char *joy_ana_map[] = { "    DPAD test: Press RIGHT", "    DPAD test: Press DOWN", "   Stick 1 Test: Tilt RIGHT", "   Stick 1 Test: Tilt DOWN", "   Stick 2 Test: Tilt RIGHT", "   Stick 2 Test: Tilt DOWN" };
 const char *config_stereo_msg[] = { "0%", "25%", "50%", "100%" };
 const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI"};
@@ -1249,6 +1279,15 @@ void HandleUI(void)
 
 	int release = 0;
 	if (c & UPSTROKE) release = 1;
+
+	// [MiSTer-DB9 BEGIN] - the "Define DB9 buttons" capture suppresses joy_raw
+	// OSD-nav injection via db9_map_define_active. Clear it whenever we are not
+	// in that page, so a global hotkey (F7/F9/F10/F11) that reassigns menustate
+	// in the switch(c) below -- before MENU_DB9MAP1's own clear can run -- cannot
+	// strand the suppression on (which would leave the DB9 pad unable to
+	// navigate the OSD until a clean re-entry/exit of the define page).
+	if (menustate != MENU_DB9MAP && menustate != MENU_DB9MAP1) db9_map_define_active = 0;
+	// [MiSTer-DB9 END]
 
 	// decode and set events
 	menu = false;
@@ -2991,6 +3030,16 @@ void HandleUI(void)
 				{
 					parse_buttons();
 				}
+				// [MiSTer-DB9 BEGIN] - when a UserIO Joystick (DB9/DB15/Saturn) mode is
+				// active, "Define buttons" defines that pad's programmable remap layout
+				// (USB pads still use "Button/Key remap"). Otherwise the normal USB flow.
+				if (!is_menu() && user_io_userio_joy_value() != 0)
+				{
+					menustate = MENU_DB9MAP;
+					menusub = 0;
+					break;
+				}
+				// [MiSTer-DB9 END]
 				start_map_setting(joy_bcount ? joy_bcount+4 : 8);
 				menustate = MENU_JOYDIGMAP;
 				menusub = 0;
@@ -4489,6 +4538,226 @@ void HandleUI(void)
 		}
 		break;
 			}
+	// [MiSTer-DB9 BEGIN] - "Define DB9 buttons": user-customizable per-core layout
+	// for the active UserIO Joystick (DB9MD/DB15/Saturn). Walks the core's button
+	// names (DPAD + CONF_STR "J1,...") and records which physical DB9 button the
+	// user presses for each, then persists + streams the selector table to the
+	// FPGA matrix. Capture reads joy_raw directly (OSD-time); nav injection is
+	// suppressed via db9_map_define_active so presses don't move the cursor.
+	case MENU_DB9MAP:
+		helptext_idx = 0;
+		menumask = 0;
+		parentstate = MENU_DB9MAP;
+
+		db9map_devtype = user_io_userio_joy_value();
+		parse_buttons();
+		db9map_nslots = joy_bcount ? (joy_bcount + DPAD_NAMES) : 8;
+		// Only button slots 4..12 are remappable in the FPGA matrix; the D-pad
+		// (0..3) is hardwired identity, so the walk starts at the first button
+		// slot and caps at slot 12 (9 button slots).
+		if (db9map_nslots > DB9_MAP_BTN_LAST + 1) db9map_nslots = DB9_MAP_BTN_LAST + 1;
+
+		// Seed from the saved layout (or factory default if none) -- like USB
+		// Define, so Finish-early keeps previously-defined buttons untouched.
+		db9_map_load(db9map_devtype, db9map_work);
+		db9map_slot  = DB9_MAP_BTN_FIRST;
+		db9map_drawn = -1;
+		db9map_prev  = user_io_joyraw_buttons();   // ignore already-held buttons
+		db9map_usr_was  = user_io_user_button();    // ignore a still-held open press
+		// Pre-fire the board User button like the Start+C chord below: if User is
+		// held at entry, mark it consumed so it neither taps (Undefine) nor holds
+		// (Reset) until released + re-pressed. Without this the never-armed
+		// db9map_usr_to stays 0 and CheckTimer(0) is always true, so an open-press
+		// hold would jump straight to "Reset to default" on the first frame.
+		db9map_usr_fired = db9map_usr_was;
+		// If Start+C (the chord that opened the OSD) is still held, pre-arm+fire it
+		// so it neither taps (Undefine) nor holds (Cancel) until released + re-pressed.
+		db9map_combo_armed = ((db9map_prev & DB9MAP_OSD_COMBO) == DB9MAP_OSD_COMBO);
+		db9map_combo_fired = db9map_combo_armed;
+		db9map_guard    = 1;                        // ignore the Enter that opened the page
+		db9_map_define_active = 1;
+
+		OsdSetTitle("Define DB9 buttons", 0);
+		for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i, "", 0, 0);
+		menustate = MENU_DB9MAP1;
+		break;
+
+	case MENU_DB9MAP1:
+		// USB "Define buttons"-style controls (mirrors MENU_JOYDIGMAP1) -- driven by
+		// the DB9 pad itself, exactly like the USB page is driven by the controller
+		// being defined:
+		//   single DB9 press   -> map this slot, advance
+		//   Start+C tap        -> Undefine this slot, advance   (USB OSD-combo tap)
+		//   Start+C hold (>1s) -> Cancel (restore prior, no save) (USB OSD-combo hold)
+		//   Enter              -> Finish (save layout so far, keep rest)
+		//   F12                -> Clear all (reset to default, restart)
+		//   board User / Space -> Undefine ; Esc / back -> Cancel  (secondary)
+		// Start+C is the pad's own USER_OSD chord (joydb_1[10]&joydb_1[6]); it is
+		// reserved from capture so it can't be mapped as a button. Captured presses
+		// read joy_raw directly (OSD-time); raw key `c` is read so Enter/Space/F12/Esc
+		// split cleanly. (Braced so the local declarations don't bleed into later
+		// case labels.)
+		{
+			uint32_t key  = c & ~UPSTROKE;
+			int      down = c && !(c & UPSTROKE);
+			int      back_l = back;
+
+			// Swallow the keypress that opened the page (a held Enter would else
+			// Finish on the first frame). Clears once the keyboard goes idle.
+			if (db9map_guard)
+			{
+				if (!c) db9map_guard = 0;
+				else { key = 0; down = 0; back_l = 0; }
+			}
+
+			// Sample the live DB9 buttons every frame so the 0->1 edge baseline
+			// stays fresh even across an Undefine; otherwise a button still held
+			// during a skip is masked as not-fresh and its next press is dropped.
+			uint16_t now   = user_io_joyraw_buttons();
+			uint16_t fresh = now & ~db9map_prev;
+			db9map_prev = now;
+
+			// Start+C chord = the pad's OSD gesture: tap -> Undefine, hold -> Cancel.
+			// Reserve its bits from capture (same-frame chord never maps a button).
+			int combo_now = ((now & DB9MAP_OSD_COMBO) == DB9MAP_OSD_COMBO);
+			if (combo_now) fresh &= ~DB9MAP_OSD_COMBO;
+			if (combo_now && !db9map_combo_armed)
+			{
+				db9map_combo_to = GetTimer(DB9MAP_HOLD_MS);
+				db9map_combo_armed = 1;
+				db9map_combo_fired = 0;
+			}
+			int combo_hold = db9map_combo_armed && combo_now && !db9map_combo_fired && CheckTimer(db9map_combo_to);
+			if (combo_hold) db9map_combo_fired = 1;
+			int combo_tap  = !combo_now && db9map_combo_armed && !db9map_combo_fired;
+			if (!combo_now && db9map_combo_armed) db9map_combo_armed = 0;
+			if (db9map_combo_armed || combo_tap) fresh = 0;   // suppress capture while the chord is held/releasing
+
+			// Board User button: tap = Undefine current slot, hold 1.5s = Reset to
+			// default -- exactly like the USB page (User-tap = KEY_ALTERASE undefine,
+			// User-hold = MENU_JOYRESET). Arm a timer on the press edge; a release
+			// before it expires is the tap, holding past it opens the reset screen.
+			int usr_btn   = user_io_user_button();
+			if (usr_btn && !db9map_usr_was) { db9map_usr_to = GetTimer(DB9MAP_RESET_MS); db9map_usr_fired = 0; }
+			int usr_hold  = usr_btn && db9map_usr_was && !db9map_usr_fired && CheckTimer(db9map_usr_to);
+			int usr_tap   = !usr_btn && db9map_usr_was && !db9map_usr_fired && !CheckTimer(db9map_usr_to);
+			if (!usr_btn) db9map_usr_fired = 0;   // released -> next press arms fresh
+			db9map_usr_was = usr_btn;
+
+			if (usr_hold)
+			{
+				// Hold past 1.5s -> "Reset to default" screen (applied on release).
+				db9_map_define_active = 0;
+				menustate = MENU_DB9RESET;
+				break;
+			}
+
+			int do_cancel   = !db9map_devtype || combo_hold || key == KEY_ESC || back_l;
+			int do_finish   = down && (key == KEY_ENTER || key == KEY_KPENTER);
+			// Keyboard F12 and the board Menu button (delivered as F12|UPSTROKE by
+			// menu_key_get) both Clear all -- accept either stroke.
+			int do_clear    = (key == KEY_F12);
+			int do_undefine = combo_tap || usr_tap || (down && key == KEY_SPACE);
+
+			if (do_cancel)
+			{
+				db9_map_define_active = 0;
+				db9_map_apply(db9map_devtype);   // restore the saved/default layout
+				menustate = MENU_COMMON1;
+				menusub = 2;
+				break;
+			}
+
+			if (do_clear)
+			{
+				// Reset the whole layout to factory default and restart the walk.
+				db9_map_factory_default(db9map_devtype, db9map_work);
+				db9map_slot  = DB9_MAP_BTN_FIRST;
+				db9map_drawn = -1;
+				break;
+			}
+
+			if (do_undefine)
+			{
+				// Leave this slot unmapped, advance.
+				db9map_work[db9map_slot] = DB9_MAP_NONE;
+				db9map_slot++;
+			}
+			else if (fresh)
+			{
+				// Capture a fresh physical DB9 press (0->1 edge) for this slot.
+				db9map_work[db9map_slot] = (uint8_t)__builtin_ctz(fresh);
+				db9map_slot++;
+			}
+
+			// Finish: save the layout so far (unvisited slots keep their seed).
+			if (do_finish || db9map_slot >= db9map_nslots)
+			{
+				db9_map_define_active = 0;
+				db9_map_save(db9map_devtype, db9map_work);
+				OsdWrite(3, "             Saved", 0, 0);
+				OsdUpdate();
+				menustate = MENU_COMMON1;
+				menusub = 2;
+				sleep(1);
+				break;
+			}
+		}
+
+		// Redraw the prompt only when the target slot changes (avoid flicker).
+		if (db9map_slot != db9map_drawn)
+		{
+			static const char *const devlabel[4] = { "", "Saturn", "DB9MD", "DB15" };
+			const char *name = (db9map_slot < DPAD_NAMES)
+				? joy_button_map[db9map_slot]
+				: joy_bnames[db9map_slot - DPAD_NAMES];
+			char s[64];
+			// Same prompt/legend wording as the USB "Define buttons" page
+			// (MENU_JOYDIGMAP1): centered "Press: <name>", device line where USB
+			// shows "Joystick ID:", and the identical control legend.
+			int len = (30 - (int)(strlen(name ? name : "?") + 7)) / 2;
+			s[0] = 0;
+			for (int i = 0; i < len; i++) strcat(s, " ");
+			strcat(s, "Press: ");
+			strcat(s, name ? name : "?");
+			OsdWrite(3, s, 0, 0);
+			snprintf(s, sizeof(s), "   Joystick: %s", devlabel[db9map_devtype & 3]);
+			OsdWrite(5, s, 0, 0);
+			// Legend matches the USB "Define buttons" page (MENU_JOYDIGMAP,
+			// !is_menu joystick), which draws four contiguous lines: Undefine at 7,
+			// "Menu-hold -> Cancel" at 8, "Enter -> Finish" at 9, "F12 -> Clear all"
+			// at 10. "Menu" here = the pad's Start+C OSD chord (tap=Undefine,
+			// hold=Cancel); "User" = the board User button (tap=Undefine,
+			// hold=Reset to default). Reset is the only hidden gesture, like USB.
+			OsdWrite(7,  "    User/Menu \x16 Undefine", 0, 0);
+			OsdWrite(8,  "    Menu-hold \x16 Cancel", 0, 0);
+			OsdWrite(9,  "        Enter \x16 Finish", 0, 0);
+			OsdWrite(10, "          F12 \x16 Clear all", 0, 0);
+			db9map_drawn = db9map_slot;
+		}
+		break;
+
+	// "Reset to default" screen, reached by holding the board User button on the
+	// define page. Mirrors USB MENU_JOYRESET/MENU_JOYRESET1: show the banner while
+	// held, apply on release (delete the .map override -> CONF_STR-derived layout),
+	// then return to the core menu.
+	case MENU_DB9RESET:
+		for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i, "", 0, 0);
+		OsdWrite(4, "       Reset to default", 0, 0);
+		menustate = MENU_DB9RESET1;
+		break;
+
+	case MENU_DB9RESET1:
+		if (!user_io_user_button())
+		{
+			db9_map_reset(db9map_devtype);
+			db9map_usr_was = 0;
+			menustate = MENU_COMMON1;
+			menusub = 2;
+		}
+		break;
+	// [MiSTer-DB9 END]
+
 	case MENU_ABOUT1:
 		OsdSetSize(16);
 		menumask = 0;

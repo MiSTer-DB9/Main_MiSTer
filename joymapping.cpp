@@ -273,3 +273,25 @@ void map_joystick_show(uint32_t *map, uint32_t *mmap, int num)
 
 	if(strlen(list) && cfg.controller_info) Info(mapinfo, cfg.controller_info * 1000);
 }
+
+// [MiSTer-DB9 BEGIN] - accessors for the DB9 factory-default derive (db9_map.cpp).
+// Reuse the existing read_buttons() static state (J1/jn/jp + cfg.gamepad_defaults)
+// so the DB9 layout follows the same per-core button declarations as USB.
+void db9_read_default_names()
+{
+	read_buttons();
+}
+
+int db9_default_name_count()
+{
+	return joy_count;
+}
+
+const char *db9_default_name(int i)
+{
+	if (i < 0 || i >= joy_count) return "";
+	// Same selection map_joystick() makes at its name-resolution step: positional
+	// (jp) names when gamepad_defaults is set, otherwise the name (jn) map.
+	return defaults ? joy_pnames[i] : joy_nnames[i];
+}
+// [MiSTer-DB9 END]
