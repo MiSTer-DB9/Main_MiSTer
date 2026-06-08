@@ -2839,67 +2839,10 @@ static void user_io_joyraw_check_change()
 	// XOR detects changes across all 16 bits (14 buttons at [13:0] + 2 type at [15:14]).
 	uint16_t changes = (joyraw ^ joyraw_bits) & 0xFFFF;
 
-	// --- joy_raw -> keyboard injection (OSD / menu / script navigation) ---------
-	// joy_raw ORs BOTH players into bits [13:0], so injecting it as keyboard during
-	// gameplay ghosts 2P directions onto 1P on jtframe cores (arrow keys -> P1).
-	// Restrict to menu-like contexts (OSD overlay, boot core, framebuffer/Scripts)
-	// where there is no core to receive the pad directly; during gameplay the pad
-	// reaches the core via the FPGA joydb/joymux path and OSD opens via hardware
-	// USER_OSD (Start+C -> sys_top deb_osd). Level-based reconcile runs every poll
-	// (before the no-change early-out) so context transitions release stale keys
-	// even without a DB9 button edge.
-	// Inject only in a menu-like context AND when a UserIO Joystick mode is active.
-	// full_inject is tested first so the selector query (which walks CONF_STR) is
-	// short-circuited away during gameplay — the common case, OSD closed. The
-	// selector is resolved via its CONF_STR option (or Minimig/AtariST ext-config)
-	// rather than a fixed status byte, so cores that park joy_type outside
-	// [127:126] (e.g. [63:62] on TI-99/AY-3-8500/Gyruss, [49:48] on
-	// PrehistoricIsle) still get DB9 OSD-nav injection.
-	int full_inject = is_menu() || user_io_osd_is_visible() || video_fb_state();
-	int inject_enabled = full_inject && (is_menu() || (user_io_userio_joy_value() != 0));
-
-	static uint16_t inj_down = 0; // buttons currently injected as down
-	uint16_t target = inject_enabled ? (joyraw & 0x3FFF) : 0;
-	// Bits 11 (DB9MD Mode) and 13 (Saturn R_trigger) both map to KEY_GRAVE. The
-	// reconcile tracks held bits, not keycodes, so if both are down and one
-	// releases it would drop KEY_GRAVE while the other still holds it (a
-	// simultaneous press would also emit GRAVE twice). Fold 13 into 11 so the
-	// shared OSD-toggle key has a single source bit.
-	if (target & 0x2000) target = (target | 0x0800) & ~0x2000;
-	// Release first (bits leaving the held/allowed set), then press the new ones.
-	uint16_t rel = inj_down & ~target;
-	while (rel) { int i = __builtin_ctz(rel); input_joyraw_kbd(joyraw_mapping[i], 0); rel &= rel - 1; }
-	uint16_t pr  = target & ~inj_down;
-	while (pr)  { int i = __builtin_ctz(pr);  input_joyraw_kbd(joyraw_mapping[i], 1); pr  &= pr  - 1; }
-	inj_down = target;
-
-	// The remaining work (pad-type detection, shm, auto-select) only needs to run
-	// on an actual joy_raw edge.
-	if (changes == 0) {
-		return;
-	}
-
-	// DB9/SNAC8 support
-	// Save DB9/DB15 detection state on physical button activity.
-	// Only written when the type changes or shm was cleared by USB/keyboard input.
 	// Type bits come from the FPGA hardware (bits 15-14), not from menu settings,
 	// so detection only fires when a physical controller is connected.
 	// Pointer-equality on `type` is safe: db9_type_name returns stable literals.
-	static const char *last_shm_type = NULL;
 	const char *type = db9_type_name((joyraw >> 14) & 3);
-
-	const char *cur_shm = db9_shm_read();
-	if (type && (!cur_shm || type != last_shm_type))
-	{
-		db9_shm_write(type);
-		last_shm_type = type;
-	}
-
-	// [MiSTer-DB9-Pro BEGIN] - Saturn locked alert state (consumed by menu.cpp status bar)
-	int locked = (type == db9_type_name(1)) && !db9_key_saturn_unlocked();
-	if (locked && !saturn_locked_state) printf("DB9: Saturn pad detected but db9pro.key missing\n");
-	saturn_locked_state = locked;
-	// [MiSTer-DB9-Pro END]
 
 	// OSD-open re-detect: joy_raw[15:14] is the FPGA probe FSM's live result while
 	// OSD is visible. A fresh DB9 button press mirrors the detected pad type into
@@ -2920,11 +2863,78 @@ static void user_io_joyraw_check_change()
 	// user_io_userio_select() no-ops when the selector already matches, so a
 	// matching press costs no SPI write. SNAC/MT32-primary stay quiet: joy_raw
 	// forces buttons to 0, so btn_press never asserts.
+	//
+	// This MUST run before the nav-injection gate below: on the first press from
+	// Off it sets the selector non-Off via user_io_status_set(), which updates
+	// cur_status[] synchronously, so the same press both selects the mode and
+	// (via the gate's selector query) enables nav — no one-poll lag / dead first
+	// press (see 77f3056; the c6b6211 reorder regressed this).
 	uint16_t btn_press = changes & joyraw & 0x3FFF;
 	if (cfg.userio_auto_select && user_io_osd_is_visible() && type && btn_press)
 	{
 		user_io_userio_select(type, /*allow_override=*/1);
 	}
+
+	// --- joy_raw -> keyboard injection (OSD / menu / script navigation) ---------
+	// joy_raw ORs BOTH players into bits [13:0], so injecting it as keyboard during
+	// gameplay ghosts 2P directions onto 1P on jtframe cores (arrow keys -> P1).
+	// Restrict to menu-like contexts (OSD overlay, boot core, framebuffer/Scripts)
+	// where there is no core to receive the pad directly; during gameplay the pad
+	// reaches the core via the FPGA joydb/joymux path and OSD opens via hardware
+	// USER_OSD (Start+C -> sys_top deb_osd). Level-based reconcile runs every poll
+	// (before the no-change early-out) so context transitions release stale keys
+	// even without a DB9 button edge.
+	// Inject only in a menu-like context AND when a UserIO Joystick mode is active.
+	// full_inject is tested first so the selector query (which walks CONF_STR) is
+	// short-circuited away during gameplay — the common case, OSD closed. The
+	// selector is resolved via its CONF_STR option (or Minimig/AtariST ext-config)
+	// rather than a fixed status byte, so cores that park joy_type outside
+	// [127:126] (e.g. [63:62] on TI-99/AY-3-8500/Gyruss, [49:48] on
+	// PrehistoricIsle) still get DB9 OSD-nav injection.
+	// NOTE: depends on the auto-select block above having already run this poll —
+	// user_io_userio_joy_value() must observe the selector write it makes, so the
+	// first press from Off both selects the mode and enables nav. Do not reorder
+	// the auto-select below this gate (that is exactly the c6b6211 regression).
+	int full_inject = is_menu() || user_io_osd_is_visible() || video_fb_state();
+	int inject_enabled = full_inject && (is_menu() || (user_io_userio_joy_value() != 0));
+
+	static uint16_t inj_down = 0; // buttons currently injected as down
+	uint16_t target = inject_enabled ? (joyraw & 0x3FFF) : 0;
+	// Bits 11 (DB9MD Mode) and 13 (Saturn R_trigger) both map to KEY_GRAVE. The
+	// reconcile tracks held bits, not keycodes, so if both are down and one
+	// releases it would drop KEY_GRAVE while the other still holds it (a
+	// simultaneous press would also emit GRAVE twice). Fold 13 into 11 so the
+	// shared OSD-toggle key has a single source bit.
+	if (target & 0x2000) target = (target | 0x0800) & ~0x2000;
+	// Release first (bits leaving the held/allowed set), then press the new ones.
+	uint16_t rel = inj_down & ~target;
+	while (rel) { int i = __builtin_ctz(rel); input_joyraw_kbd(joyraw_mapping[i], 0); rel &= rel - 1; }
+	uint16_t pr  = target & ~inj_down;
+	while (pr)  { int i = __builtin_ctz(pr);  input_joyraw_kbd(joyraw_mapping[i], 1); pr  &= pr  - 1; }
+	inj_down = target;
+
+	// The remaining work (shm save, Saturn-locked alert) only needs to run on an
+	// actual joy_raw edge.
+	if (changes == 0) {
+		return;
+	}
+
+	// DB9/SNAC8 support
+	// Save DB9/DB15 detection state on physical button activity.
+	// Only written when the type changes or shm was cleared by USB/keyboard input.
+	static const char *last_shm_type = NULL;
+	const char *cur_shm = db9_shm_read();
+	if (type && (!cur_shm || type != last_shm_type))
+	{
+		db9_shm_write(type);
+		last_shm_type = type;
+	}
+
+	// [MiSTer-DB9-Pro BEGIN] - Saturn locked alert state (consumed by menu.cpp status bar)
+	int locked = (type == db9_type_name(1)) && !db9_key_saturn_unlocked();
+	if (locked && !saturn_locked_state) printf("DB9: Saturn pad detected but db9pro.key missing\n");
+	saturn_locked_state = locked;
+	// [MiSTer-DB9-Pro END]
 
 	// Update history
 	joyraw_bits = joyraw;
