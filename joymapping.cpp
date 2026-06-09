@@ -287,11 +287,58 @@ int db9_default_name_count()
 	return joy_count;
 }
 
-const char *db9_default_name(int i)
+// Truncate a CONF_STR button label to its bare name into the caller's buffer:
+// '|' marker ("R|P" -> "R") and '(' annotation ("A (turbo)" -> "A") cut, then
+// trimmed. Each accessor owns its own buffer so a db9_slot_name() result stays
+// valid across a db9_slot_jn_name() call (no shared-buffer aliasing).
+static const char *db9_clean_label(char *dst, int dstsz, const char *label)
 {
-	if (i < 0 || i >= joy_count) return "";
-	// Same selection map_joystick() makes at its name-resolution step: positional
-	// (jp) names when gamepad_defaults is set, otherwise the name (jn) map.
-	return defaults ? joy_pnames[i] : joy_nnames[i];
+	strncpy(dst, label, dstsz - 1);
+	dst[dstsz - 1] = 0;
+	char *p = strchr(dst, '|'); if (p) *p = 0;
+	p = strchr(dst, '(');       if (p) *p = 0;
+	trim(dst);
+	return dst;
+}
+
+// Yields the k-th real (non-"-") J1 button for the DB9 derive: returns the core's
+// OWN J1 button label (cleaned via db9_clean_label) and sets *out_pos to its raw
+// J1 position. DB9MD/DB15/Saturn pads physically carry the core's native button
+// names (Genesis A,B,C,X,Y,Z; Saturn A,B,C,X,Y,Z,L,R; ...), so the derive maps
+// each label to the same-named physical button. NOT the jn/jp SNES-pad remap:
+// jn/jp rename buttons for a USB SNES-layout pad (e.g. MegaDrive jn maps C->"R",
+// Mode->"Select", Z->"L"), which scrambles a native DB9MD/Saturn pad and leaves
+// its C/Z dead. Returns NULL once k is past the last real button; dash-skip
+// indexing preserved so *out_pos == map_joystick's idx-DPAD_COUNT.
+const char *db9_slot_name(int k, int *out_pos)
+{
+	static char name[32];
+	int n = 0;
+	for (int i = 0; i < joy_count; i++)
+	{
+		if (!strcmp(joy_names[i], "-")) continue; // "-" placeholder: doesn't advance n
+		if (n == k)
+		{
+			if (out_pos) *out_pos = i;
+			return db9_clean_label(name, sizeof(name), joy_names[i]); // core's own J1 label
+		}
+		n++;
+	}
+	return NULL;
+}
+
+// jn/jp-resolved name for the k-th real button (same gamepad_defaults selection
+// as map_joystick), cleaned. CLASSIFICATION FALLBACK ONLY: the DB9 derive
+// consults it when the J1 label resolves to nothing on its own (no same-named
+// pad button, no class) -- e.g. TG16 "Button I".."Button VI" or arcade
+// "Shot"/"Thrust" -- so those buttons still land on a sensible pad button.
+// J1-label-first keeps native pads label-faithful. jn/jp tokens pair with real
+// buttons by ordinal (map_joystick's n counter), so index k directly, NOT the
+// raw J1 position. Own buffer (distinct from db9_slot_name's).
+const char *db9_slot_jn_name(int k)
+{
+	static char name[32];
+	if (k < 0 || k >= joy_count) return "";
+	return db9_clean_label(name, sizeof(name), defaults ? joy_pnames[k] : joy_nnames[k]);
 }
 // [MiSTer-DB9 END]

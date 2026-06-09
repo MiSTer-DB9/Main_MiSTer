@@ -45,9 +45,10 @@
 //   Saturn: 0-3=UDLR 4=A 5=B 6=C 7=X 8=Y 9=Z 10=Start 11=R 12=L
 
 // Fill map[DB9_MAP_SLOTS] with a sensible factory layout for the given devtype.
-// Used when no user .map exists yet. Derived from the core's CONF_STR J1/jn/jp
-// button names (gamepad_defaults respected), falling back to a hardcoded
-// per-devtype table only when the core declares no J1.
+// Used when no user .map exists yet. Derived from the core's CONF_STR J1 button
+// labels (same-named pad button first, class alias second, jn/jp consulted only
+// for labels that resolve to nothing), falling back to a hardcoded per-devtype
+// table only when the core declares no real J1 button.
 void db9_map_factory_default(int devtype, uint8_t *map);
 
 // Pack map[] button slots 4..12 into the 6-byte selector table and stream it to

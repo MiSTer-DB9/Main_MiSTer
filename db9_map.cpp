@@ -145,6 +145,18 @@ static int db9_exact_raw(int devtype, const char *name)
 // L/R (no shoulders); Saturn has no Select, so its Select source is contextual:
 // when the core uses R as R, Select rides a Start+B combo, otherwise it takes
 // the otherwise-free Saturn R trigger (raw11).
+// When a class alias's canonical pad button is already claimed (e.g. Genesis "X"
+// wants DB15 raw6 but literal "C" took it), spill onto the next free primary face
+// button (raw 4..9 -- a real button on every pad). Positional fallback so a
+// 6-button core on a 6-button pad fills A,B,C,D,E,F in order instead of dropping
+// the overflow. Returns -1 when all six face buttons are taken. Start/Select/Mode/
+// L/R (raw>=10) are never spill targets -- a class with no home stays unmapped.
+static int db9_next_free_face_raw(uint16_t used)
+{
+	for (int r = 4; r <= 9; r++) if (!(used & (1u << r))) return r;
+	return -1;
+}
+
 static int db9_class_raw(int devtype, db9_class c, int has_R)
 {
 	switch (devtype)
@@ -168,15 +180,21 @@ static int db9_class_raw(int devtype, db9_class c, int has_R)
 
 void db9_map_factory_default(int devtype, uint8_t *map)
 {
-	// Derive the layout from the core's CONF_STR J1/jn/jp button names (the same
-	// data the USB mapper uses, gamepad_defaults respected) so each core gets a
-	// good per-core default for free. Output slot i+4 == this core's joystick_0
-	// bit for its i-th declared button, so name order follows the core's own J1.
+	// Derive the layout from the core's CONF_STR J1 button labels.
+	// DB9MD/DB15/Saturn pads physically carry the core's native button names, so
+	// each J1 label is mapped to the same-named physical button (A->A, C->C, X->X
+	// ...). jn/jp are the USB SNES-layout remap and would scramble a native pad
+	// (e.g. MegaDrive jn renames C->R, Mode->Select, Z->L, killing C/Z), so they
+	// are consulted ONLY for labels that resolve to nothing on their own (no
+	// same-named pad button, no class -- e.g. TG16 "Button I", arcade "Shot").
+	// Output slot = raw J1 position + 4 == this core's joystick_0 bit for that
+	// button, so slot order follows the core's own J1 (dashes hold a position).
 	db9_read_default_names();
 	int nb = db9_default_name_count();
-	if (nb <= 0)
+	if (nb <= 0 || !db9_slot_name(0, NULL))
 	{
-		// Core declares no J1 -> nothing to derive from; use the legacy table.
+		// No J1, or a J1 with no real (non-"-") button -> nothing to derive
+		// from; use the legacy table.
 		db9_map_hardcoded_default(devtype, map);
 		return;
 	}
@@ -187,21 +205,63 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 
 	// Pre-scan: does the core consume an R-class button? Decides the Saturn
 	// Select source (Start+B combo when R is busy, else the Saturn R trigger).
+	// Same effective-name rule and slot bound as the passes below, so the
+	// decision matches what actually gets mapped.
 	int has_R = 0;
-	for (int i = 0; i < nb; i++)
-		if (db9_classify(db9_default_name(i)) == CLS_R) { has_R = 1; break; }
-
-	for (int i = 0; i < nb; i++)
+	for (int k = 0; ; k++)
 	{
-		int slot = i + 4;
-		if (slot >= DB9_MAP_SLOTS) break;
+		int pos;
+		const char *name = db9_slot_name(k, &pos);
+		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
+		db9_class c = db9_classify(name);
+		if (c == CLS_NONE && db9_exact_raw(devtype, name) < 0)
+			c = db9_classify(db9_slot_jn_name(k));
+		if (c == CLS_R) { has_R = 1; break; }
+	}
 
-		const char *name = db9_default_name(i);
-		int raw = db9_exact_raw(devtype, name);   // same-family: lossless
-		if (raw < 0)                              // cross-family: alias by class
+	// Pass 1: exact label->pad-button matches (same-family: lossless) claim
+	// their raw bits first, so a class alias resolved in pass 2 can never
+	// double-book a button the core names outright (e.g. Genesis J1 on a DB15
+	// pad: "C" exact->raw6 must keep "X" CLS_X->raw6 from also firing on it).
+	uint16_t used = 0;   // bitmask of claimed raw bits (raw <= 13)
+	for (int k = 0; ; k++)
+	{
+		int pos;
+		const char *name = db9_slot_name(k, &pos);
+		if (!name) break;
+		int slot = pos + 4;
+		if (slot > DB9_MAP_BTN_LAST) break;   // 13..15 exist in map[] but never stream
+
+		int raw = db9_exact_raw(devtype, name);
+		if (raw < 0 || (used & (1u << raw))) continue;
+		map[slot] = (uint8_t)raw;
+		used |= 1u << raw;
+	}
+
+	// Pass 2: cross-family aliasing by class for everything still unmapped. The
+	// J1 label classifies first; a label with no class falls back to the core's
+	// jn/jp (SNES-canonical) name so e.g. "Button II" still lands on B. A class
+	// alias never claims an already-taken raw bit (first claimant wins).
+	for (int k = 0; ; k++)
+	{
+		int pos;
+		const char *name = db9_slot_name(k, &pos);
+		if (!name) break;
+		int slot = pos + 4;
+		if (slot > DB9_MAP_BTN_LAST) break;
+		if (map[slot] != DB9_MAP_NONE) continue;
+
+		db9_class c = db9_classify(name);
+		if (c == CLS_NONE) c = db9_classify(db9_slot_jn_name(k));
+		if (c == CLS_NONE) continue;
+		int raw = db9_class_raw(devtype, c, has_R);
+		if (raw == DB9_MAP_NONE) continue;
+		if (raw < DB9_MAP_COMBO_STARTB)           // raw bit (combos aren't exclusive)
 		{
-			db9_class c = db9_classify(name);
-			raw = (c == CLS_NONE) ? DB9_MAP_NONE : db9_class_raw(devtype, c, has_R);
+			if (used & (1u << raw))               // canonical button taken by an
+				raw = db9_next_free_face_raw(used); // exact/earlier alias -> spill
+			if (raw < 0 || (used & (1u << raw))) continue;
+			used |= 1u << raw;
 		}
 		map[slot] = (uint8_t)raw;
 	}
