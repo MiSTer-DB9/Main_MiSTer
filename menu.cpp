@@ -4671,9 +4671,20 @@ void HandleUI(void)
 			if (do_clear)
 			{
 				// Reset the whole layout to factory default and restart the walk.
+				// Flash the USB-style "Clearing" banner (mirrors MENU_JOYDIGMAP1
+				// get_map_clear) so F12 visibly does something even when the cleared
+				// layout equals the seed, then redraw the first slot's prompt.
 				db9_map_factory_default(db9map_devtype, db9map_work);
 				db9map_slot  = DB9_MAP_BTN_FIRST;
-				db9map_drawn = -1;
+				OsdWrite(3, "", 0, 0);
+				OsdWrite(4, "          Clearing", 0, 0);
+				OsdWrite(5, "", 0, 0);
+				OsdUpdate();
+				sleep(1);
+				db9map_prev  = user_io_joyraw_buttons(); // re-baseline so a button held
+				                                         // through the flash isn't taken
+				                                         // as the slot-A press
+				db9map_drawn = -1;                       // force "Press: A" to redraw
 				break;
 			}
 
@@ -4721,6 +4732,7 @@ void HandleUI(void)
 			strcat(s, "Press: ");
 			strcat(s, name ? name : "?");
 			OsdWrite(3, s, 0, 0);
+			OsdWrite(4, "", 0, 0);
 			snprintf(s, sizeof(s), "   Joystick: %s", devlabel[db9map_devtype & 3]);
 			OsdWrite(5, s, 0, 0);
 			// Legend matches the USB "Define buttons" page (MENU_JOYDIGMAP,
