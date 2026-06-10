@@ -289,8 +289,7 @@ int db9_default_name_count()
 
 // Truncate a CONF_STR button label to its bare name into the caller's buffer:
 // '|' marker ("R|P" -> "R") and '(' annotation ("A (turbo)" -> "A") cut, then
-// trimmed. Each accessor owns its own buffer so a db9_slot_name() result stays
-// valid across a db9_slot_jn_name() call (no shared-buffer aliasing).
+// trimmed.
 static const char *db9_clean_label(char *dst, int dstsz, const char *label)
 {
 	strncpy(dst, label, dstsz - 1);
@@ -325,20 +324,5 @@ const char *db9_slot_name(int k, int *out_pos)
 		n++;
 	}
 	return NULL;
-}
-
-// jn/jp-resolved name for the k-th real button (same gamepad_defaults selection
-// as map_joystick), cleaned. CLASSIFICATION FALLBACK ONLY: the DB9 derive
-// consults it when the J1 label resolves to nothing on its own (no same-named
-// pad button, no class) -- e.g. TG16 "Button I".."Button VI" or arcade
-// "Shot"/"Thrust" -- so those buttons still land on a sensible pad button.
-// J1-label-first keeps native pads label-faithful. jn/jp tokens pair with real
-// buttons by ordinal (map_joystick's n counter), so index k directly, NOT the
-// raw J1 position. Own buffer (distinct from db9_slot_name's).
-const char *db9_slot_jn_name(int k)
-{
-	static char name[32];
-	if (k < 0 || k >= joy_count) return "";
-	return db9_clean_label(name, sizeof(name), defaults ? joy_pnames[k] : joy_nnames[k]);
 }
 // [MiSTer-DB9 END]

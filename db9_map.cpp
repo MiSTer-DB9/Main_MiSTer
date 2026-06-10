@@ -120,7 +120,7 @@ static db9_class db9_classify(const char *n)
 	if (!strcasecmp(n, "B") || f == 2) return CLS_B;
 	if (!strcasecmp(n, "X") || !strcasecmp(n, "C") || f == 3) return CLS_X;
 	if (!strcasecmp(n, "Y") || !strcasecmp(n, "D") || f == 4) return CLS_Y;
-	if (!strcasecmp(n, "R") || !strcasecmp(n, "RT") || !strcasecmp(n, "Coin")) return CLS_R;
+	if (!strcasecmp(n, "R") || !strcasecmp(n, "RT")) return CLS_R;   // Coin is NOT a shoulder (own category below)
 	if (!strcasecmp(n, "L") || !strcasecmp(n, "LT")) return CLS_L;
 	if (!strcasecmp(n, "Select") || !strcasecmp(n, "Mode") || !strcasecmp(n, "Game Select") || !strcasecmp(n, "Start 2P")) return CLS_SEL;
 	if (!strcasecmp(n, "Start") || !strcasecmp(n, "Run") || !strcasecmp(n, "Pause") || !strcasecmp(n, "Start 1P")) return CLS_START;
@@ -145,15 +145,15 @@ static int db9_exact_raw(int devtype, const char *name)
 // L/R (no shoulders); Saturn has no Select, so its Select source is contextual:
 // when the core uses R as R, Select rides a Start+B combo, otherwise it takes
 // the otherwise-free Saturn R trigger (raw11).
-// When a class alias's canonical pad button is already claimed (e.g. Genesis "X"
-// wants DB15 raw6 but literal "C" took it), spill onto the next free primary face
-// button (raw 4..9 -- a real button on every pad). Positional fallback so a
-// 6-button core on a 6-button pad fills A,B,C,D,E,F in order instead of dropping
-// the overflow. Returns -1 when all six face buttons are taken. Start/Select/Mode/
-// L/R (raw>=10) are never spill targets -- a class with no home stays unmapped.
-static int db9_next_free_face_raw(uint16_t used)
+// First free primary face-button raw bit at or above `first` (capped at 9). Used
+// both to pack gameplay buttons positionally (first=4: A,B,C,X,Y,Z in J1 order, so
+// a 6-button core fills A..F instead of dropping the overflow) and to spill a
+// secondary/Select button onto the spare X,Y,Z faces (first=7 -- gameplay owns
+// 4..6). Returns -1 when no face button at/above `first` is free. Start/Select/
+// Mode/L/R (raw>=10) are never face targets -- a button with no home stays unmapped.
+static int db9_next_free_face_raw(uint16_t used, int first)
 {
-	for (int r = 4; r <= 9; r++) if (!(used & (1u << r))) return r;
+	for (int r = first; r <= 9; r++) if (!(used & (1u << r))) return r;
 	return -1;
 }
 
@@ -178,17 +178,57 @@ static int db9_class_raw(int devtype, db9_class c, int has_R)
 	return DB9_MAP_NONE;
 }
 
+// Convention categories (DB9MD/DB15 default layout, A/B/C-first). Each J1 label
+// resolves to exactly ONE category; the factory-default passes then route the raw
+// source per category. Mirrors the audited reference in derive_preview.py.
+//   GAMEPLAY  - the "hardware" buttons; pack onto A,B,C,X,Y,Z (raw 4..9) in J1 order
+//   START     - Start/Run -> raw10
+//   COIN      - the credit button -> raw11 (Mode on DB9MD, reachable as Start+B on
+//               a 3-button pad); priority over SEL for raw11
+//   SEL       - Select/Mode -> raw11 if still free, else spills to a spare face
+//   SHOULDER  - L/R triggers -> fixed shoulder raw (DB9MD has none)
+//   SECONDARY - non-hardware meta buttons (Pause/Test/Start 2P/Coin 2 ...) -> spare X/Y/Z
+//   NOMAP     - SaveState etc. -> unmapped (matches USB)
+enum db9_cat { CAT_GAMEPLAY = 0, CAT_NOMAP, CAT_SHOULDER, CAT_START, CAT_COIN, CAT_SEL, CAT_SECONDARY };
+
+static int ci_starts(const char *n, const char *p) { return !strncasecmp(n, p, strlen(p)); }
+static int ci_ends_b(const char *n) { size_t l = strlen(n); return l && (n[l - 1] == 'b' || n[l - 1] == 'B'); }
+
+static db9_cat db9_category(const char *n)
+{
+	static const char *const secondary[] = {
+		"pause", "test", "service", "service select", "service mode", "reset",
+		"soft reset", "cheat", "advance", "auto up", "high score reset", "slam",
+		"next track", "dip", "tilt"
+	};
+	if (!strcasecmp(n, "savestate") || !strcasecmp(n, "save state")) return CAT_NOMAP;
+	if (!strcasecmp(n, "l") || !strcasecmp(n, "lt") ||
+	    !strcasecmp(n, "r") || !strcasecmp(n, "rt")) return CAT_SHOULDER;
+	if ((ci_starts(n, "start") && !strchr(n, '2')) ||
+	    !strcasecmp(n, "run") || !strcasecmp(n, "vstart")) return CAT_START;
+	if (ci_starts(n, "coin") && !strchr(n, '2') && !ci_ends_b(n)) return CAT_COIN;
+	if (!strcasecmp(n, "select") || !strcasecmp(n, "mode") ||
+	    !strcasecmp(n, "game select")) return CAT_SEL;
+	for (size_t i = 0; i < sizeof(secondary) / sizeof(*secondary); i++)
+		if (!strcasecmp(n, secondary[i])) return CAT_SECONDARY;
+	if (strcasestr(n, "start") && strchr(n, '2')) return CAT_SECONDARY;   // Start 2P
+	if (ci_starts(n, "coin") && (strchr(n, '2') || ci_ends_b(n))) return CAT_SECONDARY; // Coin 2 / Coin B
+	return CAT_GAMEPLAY;
+}
+
 void db9_map_factory_default(int devtype, uint8_t *map)
 {
 	// Derive the layout from the core's CONF_STR J1 button labels.
 	// DB9MD/DB15/Saturn pads physically carry the core's native button names, so
 	// each J1 label is mapped to the same-named physical button (A->A, C->C, X->X
-	// ...). jn/jp are the USB SNES-layout remap and would scramble a native pad
-	// (e.g. MegaDrive jn renames C->R, Mode->Select, Z->L, killing C/Z), so they
-	// are consulted ONLY for labels that resolve to nothing on their own (no
-	// same-named pad button, no class -- e.g. TG16 "Button I", arcade "Shot").
-	// Output slot = raw J1 position + 4 == this core's joystick_0 bit for that
-	// button, so slot order follows the core's own J1 (dashes hold a position).
+	// ...) by the Pass-1 exact match below -- a native pad stays byte-identical.
+	// jn/jp (the USB SNES-layout remap) are intentionally NOT consulted: they would
+	// scramble a native pad (e.g. MegaDrive jn renames C->R, Mode->Select, Z->L,
+	// killing C/Z). A label that matches no same-named pad button is routed by its
+	// db9_category (Start/Coin/Select/shoulder/secondary) or, failing that, packed
+	// positionally onto the next free face button (e.g. TG16 "Button I", arcade
+	// "Shot"). Output slot = raw J1 position + 4 == this core's joystick_0 bit for
+	// that button, so slot order follows the core's own J1 (dashes hold a position).
 	db9_read_default_names();
 	int nb = db9_default_name_count();
 	if (nb <= 0 || !db9_slot_name(0, NULL))
@@ -203,26 +243,22 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 	map[0] = 0; map[1] = 1; map[2] = 2; map[3] = 3;
 	for (int s = 4; s < DB9_MAP_SLOTS; s++) map[s] = DB9_MAP_NONE;
 
-	// Pre-scan: does the core consume an R-class button? Decides the Saturn
-	// Select source (Start+B combo when R is busy, else the Saturn R trigger).
-	// Same effective-name rule and slot bound as the passes below, so the
-	// decision matches what actually gets mapped.
+	// Pre-scan: does the core consume an R/RT shoulder button? Decides the Saturn
+	// Select/Coin source (Start+B combo when R is busy, else the Saturn R trigger).
+	// R/RT only -- Coin is its own category and never counts as an R shoulder.
 	int has_R = 0;
 	for (int k = 0; ; k++)
 	{
 		int pos;
 		const char *name = db9_slot_name(k, &pos);
 		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
-		db9_class c = db9_classify(name);
-		if (c == CLS_NONE && db9_exact_raw(devtype, name) < 0)
-			c = db9_classify(db9_slot_jn_name(k));
-		if (c == CLS_R) { has_R = 1; break; }
+		if (!strcasecmp(name, "R") || !strcasecmp(name, "RT")) { has_R = 1; break; }
 	}
 
-	// Pass 1: exact label->pad-button matches (same-family: lossless) claim
-	// their raw bits first, so a class alias resolved in pass 2 can never
-	// double-book a button the core names outright (e.g. Genesis J1 on a DB15
-	// pad: "C" exact->raw6 must keep "X" CLS_X->raw6 from also firing on it).
+	// Pass 1: exact label->pad-button matches (same-family: lossless) claim their
+	// raw bits first, so a console native pad stays byte-identical (Genesis "C"
+	// exact->raw6, "Z"->raw9, "Start"->raw10, "Mode"->raw11 ...) and a later
+	// category pass can never double-book a button the core names outright.
 	uint16_t used = 0;   // bitmask of claimed raw bits (raw <= 13)
 	for (int k = 0; ; k++)
 	{
@@ -238,36 +274,64 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 		used |= 1u << raw;
 	}
 
-	// Pass 2: cross-family aliasing by class for everything still unmapped. The
-	// J1 label classifies first; a label with no class falls back to the core's
-	// jn/jp (SNES-canonical) name so e.g. "Button II" still lands on B. A class
-	// alias never claims an already-taken raw bit (first claimant wins).
-	for (int k = 0; ; k++)
-	{
-		int pos;
-		const char *name = db9_slot_name(k, &pos);
-		if (!name) break;
-		int slot = pos + 4;
-		if (slot > DB9_MAP_BTN_LAST) break;
-		if (map[slot] != DB9_MAP_NONE) continue;
+	// Helper: claim raw11 (Mode/Select; Start+B combo on Saturn when R is busy).
+	// Returns 1 if the slot was placed. Combos don't reserve a raw bit.
+	auto claim_sel = [&](int slot) -> int {
+		if (devtype == DB9_DEV_SATURN && has_R) { map[slot] = DB9_MAP_COMBO_STARTB; return 1; }
+		if (!(used & (1u << 11))) { map[slot] = 11; used |= 1u << 11; return 1; }
+		return 0;
+	};
 
-		db9_class c = db9_classify(name);
-		if (c == CLS_NONE) c = db9_classify(db9_slot_jn_name(k));
-		if (c == CLS_NONE) continue;
-		int raw = db9_class_raw(devtype, c, has_R);
-		if (raw == DB9_MAP_NONE) continue;
-		if (raw < DB9_MAP_COMBO_STARTB)           // raw bit (combos aren't exclusive)
+	// Visit every still-unmapped real J1 button once, handing (slot, name, category)
+	// to `place`. Invoked once per category below; map[slot]!=NONE short-circuits a
+	// button already claimed by an earlier pass.
+	auto each = [&](auto place) {
+		for (int k = 0; ; k++)
 		{
-			if (used & (1u << raw))               // canonical button taken by an
-				raw = db9_next_free_face_raw(used); // exact/earlier alias -> spill
-			if (raw < 0 || (used & (1u << raw))) continue;
-			used |= 1u << raw;
+			int pos;
+			const char *name = db9_slot_name(k, &pos);
+			if (!name) break;
+			int slot = pos + 4;
+			if (slot > DB9_MAP_BTN_LAST) break;
+			if (map[slot] != DB9_MAP_NONE) continue;
+			place(slot, name, db9_category(name));
 		}
-		map[slot] = (uint8_t)raw;
-	}
+	};
 
-	// Anything the derive didn't resolve (e.g. SaveState, which isn't a real
-	// button name) stays unmapped -- same as USB, where map_joystick leaves
-	// unrecognized J1 entries unbound until the user assigns them in Define.
+	// Category passes, in the order that fixes the raw budget:
+	//   START(10) -> COIN(11) -> SEL(11 if free) -> SHOULDER -> GAMEPLAY(4..9)
+	//   -> SECONDARY (+ COIN/SEL that lost the r11 race) on spare faces 7..9.
+	// Gameplay runs before secondary so the "hardware" buttons claim A,B,C first
+	// and a <=3-button core stays 3-button-playable. Coin beats Select for r11.
+	each([&](int slot, const char *, db9_cat cat) {
+		if (cat == CAT_START && !(used & (1u << 10))) { map[slot] = 10; used |= 1u << 10; }
+	});
+	each([&](int slot, const char *, db9_cat cat) { if (cat == CAT_COIN) claim_sel(slot); });
+	each([&](int slot, const char *, db9_cat cat) { if (cat == CAT_SEL)  claim_sel(slot); });
+	each([&](int slot, const char *name, db9_cat cat) {
+		if (cat == CAT_SHOULDER)
+		{
+			int raw = db9_class_raw(devtype, db9_classify(name), has_R);
+			if (raw != DB9_MAP_NONE && !(used & (1u << raw))) { map[slot] = (uint8_t)raw; used |= 1u << raw; }
+		}
+	});
+	each([&](int slot, const char *, db9_cat cat) {
+		if (cat == CAT_GAMEPLAY)
+		{
+			int raw = db9_next_free_face_raw(used, 4);   // A,B,C,X,Y,Z (4..9) in J1 order
+			if (raw >= 0) { map[slot] = (uint8_t)raw; used |= 1u << raw; }
+		}
+	});
+	each([&](int slot, const char *, db9_cat cat) {
+		if (cat == CAT_SECONDARY || cat == CAT_SEL || cat == CAT_COIN)
+		{
+			int raw = db9_next_free_face_raw(used, 7);    // spare X,Y,Z faces -- gameplay owns 4..6
+			if (raw >= 0) { map[slot] = (uint8_t)raw; used |= 1u << raw; }
+		}
+	});
+
+	// Anything still unmapped (SaveState, an overflow keypad/peripheral button on a
+	// >6-button core, Select with no spare face) stays unmapped -- same as USB,
+	// where map_joystick leaves unresolved J1 entries unbound until Define.
 }
 // [MiSTer-DB9 END]
