@@ -4552,7 +4552,7 @@ void HandleUI(void)
 		menumask = 0;
 		parentstate = MENU_DB9MAP;
 
-		db9map_devtype = user_io_userio_joy_value();
+		db9map_devtype = user_io_userio_joy_devtype();
 		parse_buttons();
 		db9map_nslots = joy_bcount ? (joy_bcount + DPAD_NAMES) : 8;
 		// Only button slots 4..12 are remappable in the FPGA matrix; the D-pad

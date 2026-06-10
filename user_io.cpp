@@ -1526,6 +1526,29 @@ uint32_t user_io_userio_joy_value()
 	if (!db9_find_userio_joy_opt(opt, sizeof(opt), &ex)) return 0;
 	return user_io_status_get(opt, ex);
 }
+
+// Current "UserIO Joystick" selector resolved to the DB9 device-type encoding
+// (0=Off/none, 1=Saturn, 2=DB9MD, 3=DB15 -- matches joy_raw[15:14]/db9_map.h).
+// Label-based rather than option-index-based so legacy 3-entry CONF_STRs
+// ("Off,DB9MD,DB15", where index != devtype) resolve correctly. Minimig/AtariST
+// ext-config stores this encoding directly.
+int user_io_userio_joy_devtype()
+{
+	if (is_minimig() || is_st()) return (int)user_io_userio_joy_value();
+
+	char opt[256];
+	int ex;
+	char *item = db9_find_userio_joy_opt(opt, sizeof(opt), &ex);
+	if (!item) return 0;
+
+	uint32_t cur = user_io_status_get(opt, ex);
+	if (!cur) return 0;
+
+	char val[256];
+	if (!substrcpy(val, item, 2 + cur)) return 0;
+	for (int t = 1; t <= 3; t++) if (strstr(val, db9_type_name(t))) return t;
+	return 0;
+}
 // [MiSTer-DB9 END]
 
 // [MiSTer-DB9-Pro BEGIN] - clamp persisted Saturn UserIO selection when key locked
@@ -2949,13 +2972,35 @@ static void user_io_joyraw_check_change()
 	// the core FPGA-direct via joydb; this is the ~20Hz Main_MiSTer housekeeping poll
 	// and the guard fires the (file + CONF_STR) apply exactly once per load/device
 	// change. devtype matches joy_raw[15:14] (1=Saturn,2=DB9MD,3=DB15); ignores Off.
+	// joy_raw[15:14] only reports a LIVE detection (the probe runs while the OSD
+	// is open, and an idle DB15 is electrically undetectable -- all-high 4021), so
+	// it stays 0 for a configured-but-untouched pad. When live detection is
+	// absent the user's saved/OSD selector is the authority for which table to
+	// stream (in-game the FPGA data path is selector-driven via joy_type anyway),
+	// so fall back to it -- otherwise the joydb_remap reset state (all-NONE)
+	// leaves every button dead in-game until the pad is moved once inside the OSD.
+	// Resolved EVERY poll, not just on the core-load edge, because the selector
+	// can move with no detection edge to hook: a keyboard/USB-driven selector
+	// change mid-session never produces one, and a one-shot core-load seed would
+	// silently miss it (field signature: works on one core, dead-until-OSD after
+	// a later selector change). With the OSD open, a non-zero live detection still
+	// wins this poll's devtype. Cost is an in-memory cfgstr walk
+	// (user_io_get_confstr does no SPI) in the ~20Hz housekeeping poll -- never
+	// the gameplay input path (Critical Rule #2).
 	int devtype = (joyraw >> 14) & 3;
+	if (!devtype) devtype = user_io_userio_joy_devtype();
 	static int last_map_devtype = 0;
-	if (devtype && (db9_map_pending || devtype != last_map_devtype))
+	if (db9_map_pending)
+	{
+		// New core: forget the previous core's applied type so an unchanged
+		// devtype still re-streams this core's own layout.
+		last_map_devtype = 0;
+		db9_map_pending = 0;
+	}
+	if (devtype && devtype != last_map_devtype)
 	{
 		db9_map_apply(devtype);
 		last_map_devtype = devtype;
-		db9_map_pending = 0;
 	}
 
 	// The remaining work (shm save, Saturn-locked alert) only needs to run on an
