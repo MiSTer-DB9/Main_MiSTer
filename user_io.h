@@ -209,7 +209,8 @@ char *user_io_get_core_name(int orig = 0);
 char *user_io_get_core_name2();
 // [MiSTer-DB9 BEGIN] - programmable DB9 button-remap "Define buttons" page support
 uint16_t user_io_joyraw_buttons(void);   // live joy_raw[13:0] (OSD-time only)
-uint32_t user_io_userio_joy_value();     // active UserIO joystick mode (0=Off..3=DB15)
+uint32_t user_io_userio_joy_value();     // active UserIO joystick mode (raw selector value)
+int user_io_userio_joy_devtype();        // selector resolved to DB9_DEV_* (0=Off,1=Saturn,2=DB9MD,3=DB15)
 extern int db9_map_define_active;        // 1 while the define page captures presses
 // [MiSTer-DB9 END]
 char *user_io_get_core_path(const char *suffix = NULL, int recheck = 0);
