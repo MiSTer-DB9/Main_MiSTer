@@ -277,6 +277,9 @@ static int      db9map_usr_was  = 0;            // board User button held last f
 static unsigned long db9map_usr_to = 0;         // board User-hold expiry timer
 static int      db9map_usr_fired = 0;           // User tap/hold consumed (or open-press ignored)
 static int      db9map_guard    = 0;            // swallow the keypress that opened the page
+static int      db9map_release  = 0;            // block capture until all buttons release (USB key_mapped equiv)
+static int      db9map_rel_lo   = 0;            // consecutive all-low joyraw samples seen while waiting for release
+#define DB9MAP_REL_SAMPLES 2                     // all-low reads needed to clear the latch (one scan-phase read-0 must not re-arm)
 #define DB9MAP_HOLD_MS  1000                     // Start+C combo-hold -> Cancel (matches USB osd_timer GetTimer(1000), input.cpp)
 #define DB9MAP_RESET_MS 1500                     // board User-hold -> Reset to default (matches USB menu_key_get GetTimer(1500))
 // [MiSTer-DB9 END]
@@ -4563,6 +4566,7 @@ void HandleUI(void)
 		db9map_slot  = DB9_MAP_BTN_FIRST;
 		db9map_drawn = -1;
 		db9map_prev  = user_io_joyraw_buttons();   // ignore already-held buttons
+		db9map_release = (db9map_prev != 0);        // a button held at entry must release first
 		db9map_usr_was  = user_io_user_button();    // ignore a still-held open press
 		// Pre-fire the board User button like the Start+C chord below: if User is
 		// held at entry, mark it consumed so it neither taps (Undefine) nor holds
@@ -4633,6 +4637,22 @@ void HandleUI(void)
 			if (!combo_now && db9map_combo_armed) db9map_combo_armed = 0;
 			if (db9map_combo_armed || combo_tap) fresh = 0;   // suppress capture while the chord is held/releasing
 
+			// Wait-for-release gate (mirrors USB's key_mapped latch, input.cpp:3446-3532):
+			// after a slot is captured the button is still physically held, and DB9/DB15/
+			// Saturn pads are scan-multiplexed -- the held bit can momentarily read 0 between
+			// scan phases, forging a fresh 0->1 edge that spills one press across several
+			// slots. Block all capture until every button releases, then re-arm. Re-pressing
+			// the same button for the next slot stays valid (a deliberate press-release).
+			// Debounce the clear: a genuine release stays all-low, a scan-phase glitch reads
+			// 0 for a single sample then the held bit returns -- so require DB9MAP_REL_SAMPLES
+			// consecutive all-low reads, else that one transient 0 re-arms the held bit's edge.
+			if (db9map_release)
+			{
+				if (!now) { if (++db9map_rel_lo >= DB9MAP_REL_SAMPLES) db9map_release = 0; }
+				else db9map_rel_lo = 0;
+				fresh = 0;
+			}
+
 			// Board User button: tap = Undefine current slot, hold 1.5s = Reset to
 			// default -- exactly like the USB page (User-tap = KEY_ALTERASE undefine,
 			// User-hold = MENU_JOYRESET). Arm a timer on the press edge; a release
@@ -4684,6 +4704,7 @@ void HandleUI(void)
 				db9map_prev  = user_io_joyraw_buttons(); // re-baseline so a button held
 				                                         // through the flash isn't taken
 				                                         // as the slot-A press
+				db9map_release = (db9map_prev != 0);     // and must release before slot A
 				db9map_drawn = -1;                       // force "Press: A" to redraw
 				break;
 			}
@@ -4693,12 +4714,14 @@ void HandleUI(void)
 				// Leave this slot unmapped, advance.
 				db9map_work[db9map_slot] = DB9_MAP_NONE;
 				db9map_slot++;
+				db9map_release = 1;   // require full release before the next slot
 			}
 			else if (fresh)
 			{
 				// Capture a fresh physical DB9 press (0->1 edge) for this slot.
 				db9map_work[db9map_slot] = (uint8_t)__builtin_ctz(fresh);
 				db9map_slot++;
+				db9map_release = 1;   // require full release before the next slot
 			}
 
 			// Finish: save the layout so far (unvisited slots keep their seed).
