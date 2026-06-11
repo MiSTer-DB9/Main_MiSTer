@@ -4724,6 +4724,21 @@ void HandleUI(void)
 				db9map_release = 1;   // require full release before the next slot
 			}
 
+			// Skip dash ("-") placeholder slots: the core never reads them and the
+			// factory derive (db9_slot_name) leaves them unmapped, so don't prompt.
+			// Mirrors the USB Define page (input.cpp map_skip on joy_bnames[..]=="-").
+			// Runs every frame, so leading dashes are skipped on entry and trailing
+			// ones advance straight to Finish. With a short CONF_STR J1 these come from
+			// the loaded game's MRA <buttons> override (e.g. Darius: Shot,Bomb,-,-,-,-,
+			// Start,Coin,Pause); a static mid-dash J1 (e.g. Arcade-BloodBros) too.
+			while (db9map_slot < db9map_nslots
+			    && (db9map_slot - DPAD_NAMES) < joy_bcount
+			    && !strcmp(joy_bnames[db9map_slot - DPAD_NAMES], "-"))
+			{
+				db9map_work[db9map_slot] = DB9_MAP_NONE;
+				db9map_slot++;
+			}
+
 			// Finish: save the layout so far (unvisited slots keep their seed).
 			if (do_finish || db9map_slot >= db9map_nslots)
 			{
