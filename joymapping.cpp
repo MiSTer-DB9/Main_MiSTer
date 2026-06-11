@@ -273,3 +273,56 @@ void map_joystick_show(uint32_t *map, uint32_t *mmap, int num)
 
 	if(strlen(list) && cfg.controller_info) Info(mapinfo, cfg.controller_info * 1000);
 }
+
+// [MiSTer-DB9 BEGIN] - accessors for the DB9 factory-default derive (db9_map.cpp).
+// Reuse the existing read_buttons() static state (J1/jn/jp + cfg.gamepad_defaults)
+// so the DB9 layout follows the same per-core button declarations as USB.
+void db9_read_default_names()
+{
+	read_buttons();
+}
+
+int db9_default_name_count()
+{
+	return joy_count;
+}
+
+// Truncate a CONF_STR button label to its bare name into the caller's buffer:
+// '|' marker ("R|P" -> "R") and '(' annotation ("A (turbo)" -> "A") cut, then
+// trimmed.
+static const char *db9_clean_label(char *dst, int dstsz, const char *label)
+{
+	strncpy(dst, label, dstsz - 1);
+	dst[dstsz - 1] = 0;
+	char *p = strchr(dst, '|'); if (p) *p = 0;
+	p = strchr(dst, '(');       if (p) *p = 0;
+	trim(dst);
+	return dst;
+}
+
+// Yields the k-th real (non-"-") J1 button for the DB9 derive: returns the core's
+// OWN J1 button label (cleaned via db9_clean_label) and sets *out_pos to its raw
+// J1 position. DB9MD/DB15/Saturn pads physically carry the core's native button
+// names (Genesis A,B,C,X,Y,Z; Saturn A,B,C,X,Y,Z,L,R; ...), so the derive maps
+// each label to the same-named physical button. NOT the jn/jp SNES-pad remap:
+// jn/jp rename buttons for a USB SNES-layout pad (e.g. MegaDrive jn maps C->"R",
+// Mode->"Select", Z->"L"), which scrambles a native DB9MD/Saturn pad and leaves
+// its C/Z dead. Returns NULL once k is past the last real button; dash-skip
+// indexing preserved so *out_pos == map_joystick's idx-DPAD_COUNT.
+const char *db9_slot_name(int k, int *out_pos)
+{
+	static char name[32];
+	int n = 0;
+	for (int i = 0; i < joy_count; i++)
+	{
+		if (!strcmp(joy_names[i], "-")) continue; // "-" placeholder: doesn't advance n
+		if (n == k)
+		{
+			if (out_pos) *out_pos = i;
+			return db9_clean_label(name, sizeof(name), joy_names[i]); // core's own J1 label
+		}
+		n++;
+	}
+	return NULL;
+}
+// [MiSTer-DB9 END]

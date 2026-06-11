@@ -122,7 +122,6 @@ typedef struct {
 	char audio_mode[8];
 	uint8_t audio_mode_id;
 	// [MiSTer-DB9 END]
-
 } cfg_t;
 
 extern cfg_t cfg;

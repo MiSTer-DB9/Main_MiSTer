@@ -133,6 +133,19 @@ int input_state();
 void input_uinp_destroy();
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 void input_joyraw_kbd(uint16_t key, int press);
+// programmable DB9 button-remap matrix: stream the active core's saved layout
+// (or factory default) for the given DB9 device type (DB9_DEV_*) to the FPGA.
+// OSD-time only.
+void db9_map_apply(int devtype);
+// load the active core's saved layout for `devtype` into `map` (DB9_MAP_SLOTS
+// bytes), or the factory default when no .map exists. No streaming -- used to
+// seed the "Define DB9 buttons" editor so Finish-early keeps prior bindings.
+void db9_map_load(int devtype, uint8_t *map);
+// persist a user-defined DB9 layout (DB9_MAP_SLOTS bytes) and stream it.
+void db9_map_save(int devtype, const uint8_t *map);
+// reset `devtype` to factory default: delete the saved .map override and
+// re-stream the CONF_STR-derived layout (USB "Reset to default" equivalent).
+void db9_map_reset(int devtype);
 // [MiSTer-DB9 END]
 
 extern char joy_bnames[NUMBUTTONS][32];

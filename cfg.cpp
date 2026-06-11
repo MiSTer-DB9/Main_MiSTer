@@ -154,7 +154,6 @@ static const ini_var_t ini_vars[] =
 	// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0] audio routing
 	{ "AUDIO_MODE", (void*)(cfg.audio_mode), STRING, 0, sizeof(cfg.audio_mode) - 1 },
 	// [MiSTer-DB9 END]
-
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
@@ -624,7 +623,7 @@ void cfg_parse()
 	cfg_error_count = 0;
 	strcpy(cfg.autofire_rates, "10,15,30");
 	strcpy(cfg.screenshot_image_format, "png");
-	
+
 	ini_parse(altcfg(), video_get_core_mode_name(1));
 	if (has_video_sections && !using_video_section)
 	{
