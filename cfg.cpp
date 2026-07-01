@@ -154,6 +154,7 @@ static const ini_var_t ini_vars[] =
 	// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0] audio routing
 	{ "AUDIO_MODE", (void*)(cfg.audio_mode), STRING, 0, sizeof(cfg.audio_mode) - 1 },
 	// [MiSTer-DB9 END]
+	{ "KEYBOARD_AS_JOYSTICK", (void*)(cfg.keyboard_as_joystick), HEX32ARR, 0, 0xFFFFFFFF },
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
