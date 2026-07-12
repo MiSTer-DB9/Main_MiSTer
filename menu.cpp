@@ -40,6 +40,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <pthread.h>
 #include <libgen.h>
 #include <bluetooth.h>
 #include <hci.h>
@@ -239,6 +240,8 @@ static uint32_t menu_timer = 0;
 static uint32_t menu_save_timer = 0;
 static uint32_t load_addr = 0;
 static int32_t  bt_timer = 0;
+static bool     bt_present = false;
+static bool     bt_pairing = false;
 
 static bool osd_unlocked = 1;
 static char osd_code_entry[32];
@@ -1151,6 +1154,12 @@ static int db9_extcfg_userio_next(int cur, int minus)
 }
 // [MiSTer-DB9-Pro END]
 
+static void *close_pipe_async(void *arg)
+{
+	pclose((FILE *)arg);
+	return NULL;
+}
+
 void HandleUI(void)
 {
 	PROFILE_FUNCTION();
@@ -1168,6 +1177,16 @@ void HandleUI(void)
 				printf("*** reset bt ***\n");
 				system("/bin/bluetoothd hcireset &");
 			}
+		}
+	}
+
+	{
+		static unsigned long bt_icon_timer = 0;
+		if (!bt_pairing && (!bt_icon_timer || CheckTimer(bt_icon_timer)))
+		{
+			bt_present = (hci_get_route(0) >= 0);
+			bt_icon_timer = GetTimer(3000);
+			if (!bt_icon_timer) bt_icon_timer = 1;
 		}
 	}
 
@@ -1280,9 +1299,6 @@ void HandleUI(void)
 		c = menu_key_get();
 	}
 
-	int release = 0;
-	if (c & UPSTROKE) release = 1;
-
 	// [MiSTer-DB9 BEGIN] - the "Define DB9 buttons" capture suppresses joy_raw
 	// OSD-nav injection via db9_map_define_active. Clear it whenever we are not
 	// in that page, so a global hotkey (F7/F9/F10/F11) that reassigns menustate
@@ -1314,12 +1330,10 @@ void HandleUI(void)
 		static uint32_t wake_release = 0;
 		if (!video_fb_state() && cfg.fb_terminal)
 		{
-			if (wake_release)
+			if (c == wake_release)
 			{
-				uint32_t wr = wake_release;
 				wake_release = 0;
-				if (c == wr) c = 0;
-				else if (!c) wake_release = wr;
+				c = 0;
 			}
 
 			if (timeout && CheckTimer(timeout))
@@ -1351,10 +1365,7 @@ void HandleUI(void)
 				timeout = 0;
 				if (menu_visible <= 0)
 				{
-					// some keys (F12/ESC/Back) act on release, so swallow the
-					// wake-up key's release too, otherwise it flips the OSD
-					// to the system settings page
-					if (c && !(c & UPSTROKE)) wake_release = c | UPSTROKE;
+					wake_release = c | UPSTROKE;
 					c = 0;
 					menu_visible = 1;
 					video_menu_bg(user_io_status_get("[3:1]"));
@@ -5968,7 +5979,7 @@ void HandleUI(void)
 			}
 		}
 
-		if (release) PrintDirectory(1);
+		if (c & UPSTROKE) PrintDirectory(1);
 		break;
 
 		/******************************************************************/
@@ -7551,6 +7562,7 @@ void HandleUI(void)
 		sched_setaffinity(0, sizeof(set), &set);
 		if (parentstate == MENU_BTPAIR)
 		{
+			bt_pairing = true;
 			OsdUpdate();
 			if(cfg.bt_reset_before_pair) system("hciconfig hci0 reset");
 			script_pipe = popen("/usr/sbin/btpair", "r");
@@ -7598,9 +7610,13 @@ void HandleUI(void)
 			if (!script_finished)
 			{
 				strcpy(script_command, "killall ");
-				strcat(script_command, (parentstate == MENU_BTPAIR) ? "-SIGINT btctl" : flist_SelectedItem()->de.d_name);
+				strcat(script_command, (parentstate == MENU_BTPAIR) ? "-SIGINT btpair btctl" : flist_SelectedItem()->de.d_name);
 				system(script_command);
-				pclose(script_pipe);
+				FILE *p = script_pipe;
+				script_pipe = NULL;
+				pthread_t tid;
+				if (!pthread_create(&tid, NULL, close_pipe_async, p)) pthread_detach(tid);
+				else { printf("close_pipe_async: pthread_create failed\n"); pclose(p); }
 				cpu_set_t set;
 				CPU_ZERO(&set);
 				CPU_SET(1, &set);
@@ -7620,6 +7636,7 @@ void HandleUI(void)
 			{
 				if (parentstate == MENU_BTPAIR)
 				{
+					bt_pairing = false;
 					menustate = MENU_NONE1;
 				}
 				else
@@ -8149,7 +8166,7 @@ void HandleUI(void)
 				int n = 8;
 				if (getNet(2)) str[n++] = 0x1d;
 				if (getNet(1)) str[n++] = 0x1c;
-				if (hci_get_route(0) >= 0) str[n++] = 4;
+				if (bt_present) str[n++] = 4;
 				if (user_io_get_sdram_cfg() & 0x8000)
 				{
 					switch (user_io_get_sdram_cfg() & 7)
