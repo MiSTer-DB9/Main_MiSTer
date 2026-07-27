@@ -2654,6 +2654,7 @@ void HandleUI(void)
 									if (is_3do() && !bit) p3do_reset();
 
 									user_io_status_set(opt, 1, ex);
+									if (is_n64() && !ex && !strcmp(opt, "[41]")) n64_save_dd_disk();
 									user_io_status_set(opt, 0, ex);
 
 									menustate = MENU_GENERIC_MAIN1;
@@ -6617,7 +6618,7 @@ void HandleUI(void)
 	case MENU_MINIMIG_CHIPSET1:
 		helptext_idx = HELPTEXT_CHIPSET;
 		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-		menumask = 0x1FFF; // extended from 0x3FF for DB9/SNAC8 items (bits 0-12)
+		menumask = 0x3FFF; // extended from 0x7FF for DB9/SNAC8 items (bits 0-13)
 		// [MiSTer-DB9 END]
 		OsdSetTitle("System");
 		parentstate = menustate;
@@ -6681,9 +6682,16 @@ void HandleUI(void)
 		OsdWrite(m++, s, menusub == 11, 0);
 		// [MiSTer-DB9 END]
 
+		OsdWrite(m++, "", 0, 0);
+		strcpy(s, " Ethernet : ");
+		strcat(s, a2065_iface_msg(a2065_get_iface()));
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: item shifted 9 -> 12 (7/8 = UIO Joy/Ply, 9 unused)
+		OsdWrite(m++, s, menusub == 12, 0);
+		// [MiSTer-DB9 END]
+
 		for (int i = m; i < OsdGetSize() - 1; i++) OsdWrite(i, "", 0, 0);
 		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 12, 0);
+		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 13, 0);
 		// [MiSTer-DB9 END]
 
 		menustate = MENU_MINIMIG_CHIPSET2;
@@ -6832,8 +6840,26 @@ void HandleUI(void)
 				minimig_config.memory ^= 0x40;
 				menustate = MENU_MINIMIG_CHIPSET1;
 			}
-			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Ethernet shifted 9 -> 12
 			else if (menusub == 12)
+			// [MiSTer-DB9 END]
+			{
+				// A2065 ethernet: OFF -> eth0 -> eth1 -> macvlan -> tap0,
+				// skipping anything this box cannot support (no second NIC,
+				// no tun driver, no macvlan). OFF and eth0 always qualify, so
+				// the walk always lands somewhere.
+				int m2 = a2065_get_iface();
+				for (int i = 0; i < A2065_MODES; i++)
+				{
+					m2 = minus ? (m2 + A2065_MODES - 1) % A2065_MODES
+					           : (m2 + 1) % A2065_MODES;
+					if (a2065_mode_available(m2)) break;
+				}
+				a2065_set_iface(m2);
+				menustate = MENU_MINIMIG_CHIPSET1;
+			}
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Back shifted 10 -> 13
+			else if (menusub == 13)
 			// [MiSTer-DB9 END]
 			{
 				menustate = MENU_MINIMIG_MAIN1;
