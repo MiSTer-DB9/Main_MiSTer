@@ -190,6 +190,7 @@ enum MENU
 	MENU_MINIMIG_HDFFILE_SELECTED,
 	MENU_MINIMIG_ADFFILE_SELECTED,
 	MENU_MINIMIG_ROMFILE_SELECTED,
+	MENU_MINIMIG_EXTROMFILE_SELECTED,
 	MENU_MINIMIG_LOADCONFIG1,
 	MENU_MINIMIG_LOADCONFIG2,
 	MENU_MINIMIG_SAVECONFIG1,
@@ -6438,7 +6439,10 @@ void HandleUI(void)
 	case MENU_MINIMIG_ADFFILE_SELECTED:
 		if (!mgl->done)
 		{
-			snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), mgl->item[mgl->current].path);
+			const char *p = mgl->item[mgl->current].path;
+			if (p[0] == '/') snprintf(selPath, sizeof(selPath), "%s", p);
+			else if (p[0] == '.' && p[1] == '.') snprintf(selPath, sizeof(selPath), "%s/%s", getRootDir(), p);
+			else snprintf(selPath, sizeof(selPath), "%s/%s", HomeDir(), p);
 			// Update /tmp/ files to reflect the actual file being loaded by MGL
 			if (cfg.log_file_entry)
 			{
@@ -6618,7 +6622,7 @@ void HandleUI(void)
 	case MENU_MINIMIG_CHIPSET1:
 		helptext_idx = HELPTEXT_CHIPSET;
 		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-		menumask = 0x3FFF; // extended from 0x7FF for DB9/SNAC8 items (bits 0-13)
+		menumask = 0x7FFF; // extended from 0xFFF for DB9/SNAC8 items (bits 0-14)
 		// [MiSTer-DB9 END]
 		OsdSetTitle("System");
 		parentstate = menustate;
@@ -6673,25 +6677,40 @@ void HandleUI(void)
 			strncat(&s[3], name, 24);
 		}
 
-		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: ROM shifted 7 -> 10
 		OsdWrite(m++, s, menusub == 10, 0);
+		// [MiSTer-DB9 END]
+		strcpy(s, " Ext.ROM: ");
+		{
+			char *path = HomeDir();
+			int len = strlen(path);
+			const char *name = minimig_get_extrom();
+			if (!name[0]) {
+				strcat(s, "<none>");
+			} else {
+				if (!strncasecmp(name, path, len)) name += len + 1;
+				strncat(&s[3], name, 24);
+			}
+		}
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Ext.ROM shifted 8 -> 11
+		OsdWrite(m++, s, menusub == 11, 0);
 		// [MiSTer-DB9 END]
 		strcpy(s, " HRTmon : ");
 		strcat(s, (minimig_config.memory & 0x40) ? "enabled " : "disabled");
-		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-		OsdWrite(m++, s, menusub == 11, 0);
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: HRTmon shifted 9 -> 12
+		OsdWrite(m++, s, menusub == 12, 0);
 		// [MiSTer-DB9 END]
 
 		OsdWrite(m++, "", 0, 0);
 		strcpy(s, " Ethernet : ");
 		strcat(s, a2065_iface_msg(a2065_get_iface()));
-		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: item shifted 9 -> 12 (7/8 = UIO Joy/Ply, 9 unused)
-		OsdWrite(m++, s, menusub == 12, 0);
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Ethernet shifted 10 -> 13 (7/8 = UIO Joy/Ply, 9 unused)
+		OsdWrite(m++, s, menusub == 13, 0);
 		// [MiSTer-DB9 END]
 
 		for (int i = m; i < OsdGetSize() - 1; i++) OsdWrite(i, "", 0, 0);
-		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 13, 0);
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Back shifted 11 -> 14
+		OsdWrite(OsdGetSize() - 1, STD_BACK, menusub == 14, 0);
 		// [MiSTer-DB9 END]
 
 		menustate = MENU_MINIMIG_CHIPSET2;
@@ -6837,11 +6856,26 @@ void HandleUI(void)
 			else if (menusub == 11)
 			// [MiSTer-DB9 END]
 			{
+				if (minus)
+				{
+					minimig_set_extrom((char *)"");
+					menustate = MENU_MINIMIG_CHIPSET1;
+				}
+				else if (select)
+				{
+					ioctl_index = 1;
+					SelectFile(Selected_F[5], "ROM", SCANO_DIR | SCANO_UMOUNT, MENU_MINIMIG_EXTROMFILE_SELECTED, MENU_MINIMIG_CHIPSET1);
+				}
+			}
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: HRTmon shifted 9 -> 12
+			else if (menusub == 12)
+			// [MiSTer-DB9 END]
+			{
 				minimig_config.memory ^= 0x40;
 				menustate = MENU_MINIMIG_CHIPSET1;
 			}
-			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Ethernet shifted 9 -> 12
-			else if (menusub == 12)
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Ethernet shifted 10 -> 13
+			else if (menusub == 13)
 			// [MiSTer-DB9 END]
 			{
 				// A2065 ethernet: OFF -> eth0 -> eth1 -> macvlan -> tap0,
@@ -6858,8 +6892,8 @@ void HandleUI(void)
 				a2065_set_iface(m2);
 				menustate = MENU_MINIMIG_CHIPSET1;
 			}
-			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Back shifted 10 -> 13
-			else if (menusub == 13)
+			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: Back shifted 11 -> 14
+			else if (menusub == 14)
 			// [MiSTer-DB9 END]
 			{
 				menustate = MENU_MINIMIG_MAIN1;
@@ -6884,32 +6918,60 @@ void HandleUI(void)
 		menustate = MENU_MINIMIG_CHIPSET1;
 		break;
 
+	case MENU_MINIMIG_EXTROMFILE_SELECTED:
+		memcpy(Selected_F[5], selPath, sizeof(Selected_F[5]));
+		minimig_set_extrom(selPath);
+		menustate = MENU_MINIMIG_CHIPSET1;
+		break;
+
 	case MENU_MINIMIG_DISK1:
 		helptext_idx = HELPTEXT_HARDFILE;
 		OsdSetTitle("Drives");
 
 		m = 0;
 		parentstate = menustate;
+		{
+			int cdtv_on = (minimig_config.chipset & CONFIG_CDTV) ? 1 : 0;
+			int ide_on  = (minimig_config.ide_cfg & 1) ? 1 : 0;
+			int io_on   = ide_on || cdtv_on;
+
 		menumask = 0xC01;
-		if (minimig_config.ide_cfg & 1) menumask |= 0x156;
+			if (ide_on)  menumask |= 0x002;
+			if (io_on)   menumask |= 0x154;
 		OsdWrite(m++, "", 0, 0);
-		strcpy(s, " IDE A600/A1200    : ");
-		strcat(s, (minimig_config.ide_cfg & 1) ? "On " : "Off");
+
+			const char *iomode = cdtv_on ? "CDTV" : (ide_on ? "IDE " : "OFF ");
+			strcpy(s, " I/O controller    : ");
+			strcat(s, iomode);
 		OsdWrite(m++, s, menusub == 0, 0);
+
 		strcpy(s, " Fast-IDE (68020)  : ");
-		strcat(s, (minimig_config.ide_cfg & 0x20) ? "Off" : "On");
-		OsdWrite(m++, s, menusub == 1,  !(minimig_config.ide_cfg & 1) || !(minimig_config.cpu & 2));
+			if (cdtv_on) strcat(s, "N/A");
+			else         strcat(s, (minimig_config.ide_cfg & 0x20) ? "Off" : "On ");
+			OsdWrite(m++, s, menusub == 1, cdtv_on || !ide_on || !(minimig_config.cpu & 2));
 		if (!(minimig_config.cpu & 2)) menumask &= ~2;
 		OsdWrite(m++);
 
-		{
 			uint n = 2, t = 8;
 			for (uint i = 0; i < 4; i++)
 			{
+				if (cdtv_on)
+				{
+					static const char *cdtv_slot_label[4] = {
+						" CD0           : ",
+						" HD0  (SCSI)   : ",
+						" HD1  (SCSI)   : ",
+						" HD2  (SCSI)   : "
+					};
+					strcpy(s, cdtv_slot_label[i]);
+				}
+				else
+				{
 				strcpy(s, (i & 2) ? " Sec. " : " Pri. ");
 				strcat(s, (i & 1) ? " Slave: " : "Master: ");
+				}
 				strcat(s, (minimig_config.hardfile[i].cfg == 2) ? "Removable/CD" : minimig_config.hardfile[i].cfg ? "Fixed/HDD" : "Disabled");
-				OsdWrite(m++, s, (minimig_config.ide_cfg & 1) ? (menusub == n++) : 0, !(minimig_config.ide_cfg & 1));
+				OsdWrite(m++, s, io_on ? (menusub == n++) : 0, !io_on);
 				if (minimig_config.hardfile[i].filename[0])
 				{
 					strcpy(s, "                                ");
@@ -6923,7 +6985,7 @@ void HandleUI(void)
 				{
 					strcpy(s, "   ** not selected **");
 				}
-				enable = (minimig_config.ide_cfg & 1) && minimig_config.hardfile[i].cfg;
+				enable = io_on && minimig_config.hardfile[i].cfg;
 				if (enable) menumask |= t;	// Make hardfile selectable
 				OsdWrite(m++, s, menusub == n++, enable == 0);
 				t <<= 2;
@@ -6947,15 +7009,35 @@ void HandleUI(void)
 		{
 			if (menusub == 0)
 			{
-				if (select)
+				if (select || minus || plus)
 				{
-					minimig_config.ide_cfg ^= 1;
+					int cur;
+					if (minimig_config.chipset & CONFIG_CDTV)   cur = 2;
+					else if (minimig_config.ide_cfg & 1)        cur = 1;
+					else                                        cur = 0;
+					int next = minus ? ((cur + 2) % 3) : ((cur + 1) % 3);
+					if (next == 0)
+					{
+						minimig_config.ide_cfg &= ~1;
+						minimig_config.chipset &= ~CONFIG_CDTV;
+					}
+					else if (next == 1)
+					{
+						minimig_config.ide_cfg |= 1;
+						minimig_config.chipset &= ~CONFIG_CDTV;
+					}
+					else
+					{
+						minimig_config.ide_cfg &= ~1;
+						minimig_config.chipset |= CONFIG_CDTV;
+					}
+					minimig_ConfigChipset(minimig_config.chipset);
 					menustate = MENU_MINIMIG_DISK1;
 				}
 			}
 			else if (menusub == 1)
 			{
-				if (select)
+				if (select && !(minimig_config.chipset & CONFIG_CDTV))
 				{
 					minimig_config.ide_cfg ^= 0x20;
 					menustate = MENU_MINIMIG_DISK1;

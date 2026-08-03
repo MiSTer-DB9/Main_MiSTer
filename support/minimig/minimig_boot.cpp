@@ -12,6 +12,8 @@
 #include "../../file_io.h"
 #include "minimig_config.h"
 #include "minimig_fdd.h"
+#include "akiko_cd32.h"
+#include "cdtv_cd.h"
 #include "../../cfg.h"
 
 static uint8_t buffer[1024];
@@ -426,6 +428,9 @@ void BootInit()
 	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO on core launch
 	minimig_auto_db9();
 	// [MiSTer-DB9 END]
+
+	akiko_cd32_init();
+	cdtv_cd_init();
 }
 
 void BootPrintEx(const char * str)
