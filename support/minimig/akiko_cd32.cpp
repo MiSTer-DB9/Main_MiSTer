@@ -54,8 +54,6 @@ static void akiko_diag(const char *fmt, ...);
 #define AKIKO_NVRAM_FILE_LEGACY       "/media/fat/saves/Minimig/cd32.nvr"
 #define AKIKO_STATUS_NVR_DIRTY        (1u << 7)
 #define AKIKO_NVRAM_POLL_PERIOD_MS    1000
-#define AKIKO_NVRAM_DIRTY_DEBOUNCE_MS 30000
-#define AKIKO_NVRAM_MIN_SAVE_INTERVAL_MS 60000
 
 #define AKIKO_SECTOR_BYTES 2352
 
@@ -200,33 +198,25 @@ static inline bool cd32_active(void)
 {
 	return (minimig_config.cpu & 0x03) == 3
 	    && ((minimig_config.chipset >> 2) & 7) == 6
-	    && minimig_config.hardfile[0].cfg == 2;
-}
-
-static bool cd_is_mounted(void)
-{
-	for (int p = 0; p < 2; p++) {
-		for (int d = 0; d < 2; d++) {
-			drive_t *drv = &ide_inst[p].drive[d];
-			if (drv->cd && (drv->chd_f || drv->f)) {
-				return true;
-			}
-		}
-	}
-	return false;
+	    && (minimig_config.cd32_drive.cfg == 2 || minimig_config.hardfile[0].cfg == 2);
 }
 
 static drive_t *cd_find_drive(void)
 {
+	if (cd32_drive.cd && (cd32_drive.chd_f || cd32_drive.f)) return &cd32_drive;
+
 	for (int p = 0; p < 2; p++) {
 		for (int d = 0; d < 2; d++) {
 			drive_t *drv = &ide_inst[p].drive[d];
-			if (drv->cd && (drv->chd_f || drv->f)) {
-				return drv;
-			}
+			if (drv->cd && (drv->chd_f || drv->f)) return drv;
 		}
 	}
 	return NULL;
+}
+
+static bool cd_is_mounted(void)
+{
+	return cd_find_drive() != NULL;
 }
 
 static uint16_t akiko_read_status(void)
@@ -234,7 +224,7 @@ static uint16_t akiko_read_status(void)
 	uint16_t res;
 	EnableIO();
 	res = spi_w(AKIKO_STATUS_CMD);
-	if (!res) res = (uint8_t)spi_w(0);
+	if (!res) res = spi_w(0);
 	DisableIO();
 	return res;
 }
@@ -714,6 +704,19 @@ static uint8_t akiko_read_sec_counter(void)
 	return (uint8_t)(w & 0xff);
 }
 
+static void akiko_ext_block_write(uint16_t addr, const uint8_t *buf, int bytes)
+{
+	static uint16_t words[AKIKO_SECTOR_BYTES / 2];
+	memcpy(words, buf, bytes);
+
+	EnableIO();
+	fpga_spi_fast(UIO_DMA_WRITE);
+	fpga_spi_fast(addr);
+	fpga_spi_fast(0);
+	fpga_spi_fast_block_write(words, bytes / 2);
+	DisableIO();
+}
+
 static void akiko_nvram_dump(uint8_t *out_1024)
 {
 	EnableIO();
@@ -742,15 +745,25 @@ static bool akiko_nvram_load_from_path(const char *path)
 		return false;
 	}
 
-	int rc = user_io_file_mount(path, 0, 0, 0);
-	if (rc != 1) {
-		akiko_diag("[akiko] NVR mount FAIL: user_io_file_mount(%s, slot=0) rc=%d",
-		           path, rc);
+	uint8_t nvr[AKIKO_NVRAM_BYTES];
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		akiko_diag("[akiko] NVR load FAIL: fopen(%s) errno=%d", path, errno);
+		cd_save_load_failed = true;
+		return false;
+	}
+	size_t got = fread(nvr, 1, sizeof(nvr), f);
+	fclose(f);
+	if (got != sizeof(nvr)) {
+		akiko_diag("[akiko] NVR load FAIL: read %u of %d bytes from %s",
+		           (unsigned)got, AKIKO_NVRAM_BYTES, path);
 		cd_save_load_failed = true;
 		return false;
 	}
 
-	akiko_diag("[akiko] NVR mounted slot 0 (%d bytes from %s) — verify in 100 ms",
+	akiko_ext_block_write(AKIKO_NVRAM_ADDR, nvr, AKIKO_NVRAM_BYTES);
+
+	akiko_diag("[akiko] NVR loaded (%d bytes from %s) — verify in 100 ms",
 	           AKIKO_NVRAM_BYTES, path);
 	cd_save_load_failed = false;
 	strncpy(nvr_verify_path, path, sizeof(nvr_verify_path) - 1);
@@ -894,25 +907,9 @@ static bool akiko_nvram_save_to_disk(void)
 	return akiko_nvram_save_to_path(target);
 }
 
-#define AKIKO_SEC_SLOT 1
-static const bool g_akiko_fast_push = (getenv("AKIKO_SLOW_PUSH") == nullptr);
-
 static void akiko_push_sector(const uint8_t *buf)
 {
-	if (g_akiko_fast_push) {
-		EnableIO();
-		spi_w(UIO_SECTOR_RD | (AKIKO_SEC_SLOT << 8));
-		fpga_spi_fast_block_write_8(buf, AKIKO_SECTOR_BYTES);
-		DisableIO();
-	} else {
-		EnableIO();
-		spi8(UIO_DMA_WRITE);
-		spi32_w(AKIKO_SECTOR_ADDR);
-		for (int i = 0; i < AKIKO_SECTOR_BYTES; i++) {
-			spi_w(buf[i]);
-		}
-		DisableIO();
-	}
+	akiko_ext_block_write(AKIKO_SECTOR_ADDR, buf, AKIKO_SECTOR_BYTES);
 }
 
 static bool cd_read_audio_sector(drive_t *drv, uint32_t lba, uint8_t *buf2352)
@@ -1404,12 +1401,9 @@ void akiko_cd32_poll(void)
 	static int unmounted_dump_throttle = 0;
 	if (!mounted && (unmounted_dump_throttle++ % 60) == 0 && unmounted_dump_throttle < 5*60) {
 		akiko_diag(
-			"[akiko] ide_inst dump: "
-			"[0,0]p=%d/c=%d/chd=%p/f=%p  [0,1]p=%d/c=%d/chd=%p/f=%p",
-			ide_inst[0].drive[0].present, ide_inst[0].drive[0].cd,
-			(void*)ide_inst[0].drive[0].chd_f, (void*)ide_inst[0].drive[0].f,
-			ide_inst[0].drive[1].present, ide_inst[0].drive[1].cd,
-			(void*)ide_inst[0].drive[1].chd_f, (void*)ide_inst[0].drive[1].f
+			"[akiko] cd32_drive dump: p=%d/c=%d/chd=%p/f=%p",
+			cd32_drive.present, cd32_drive.cd,
+			(void*)cd32_drive.chd_f, (void*)cd32_drive.f
 		);
 	}
 #endif
@@ -1498,9 +1492,7 @@ void akiko_cd32_poll(void)
 	}
 
 	{
-		static uint32_t nvr_dirty_seen_at    = 0;
-		static uint32_t nvr_last_save_at     = 0;
-		static int      nvr_menu_was_present = 0;
+		static int nvr_menu_was_present = 0;
 		const bool nvr_dirty_now  = (status & AKIKO_STATUS_NVR_DIRTY) != 0;
 		const int  nvr_menu_now   = menu_present();
 		const bool osd_open_edge  = nvr_menu_now && !nvr_menu_was_present;
@@ -1508,26 +1500,10 @@ void akiko_cd32_poll(void)
 
 		if (nvr_dirty_now) {
 			cd_save_dirty_observed = true;
-			uint32_t now_ms = (uint32_t)GetTimer(0);
-			if (!nvr_dirty_seen_at) {
-				nvr_dirty_seen_at = now_ms;
-				akiko_diag("[akiko] NVR dirty observed at t=%u", now_ms);
-			}
-			const bool throttle_expired = rx_idle &&
-				(now_ms - nvr_dirty_seen_at) >= AKIKO_NVRAM_DIRTY_DEBOUNCE_MS;
-			const bool fire = osd_open_edge || throttle_expired;
-			const bool cooldown_clear = !nvr_last_save_at ||
-				(now_ms - nvr_last_save_at) >= AKIKO_NVRAM_MIN_SAVE_INTERVAL_MS;
-			if (fire && cooldown_clear) {
-				if (osd_open_edge) {
-					akiko_diag("[akiko] NVR flush: OSD opened with dirty pending");
-				}
+			if (osd_open_edge) {
+				akiko_diag("[akiko] NVR flush: OSD opened with dirty pending");
 				akiko_nvram_save_to_disk();
-				nvr_dirty_seen_at = 0;
-				nvr_last_save_at  = now_ms;
 			}
-		} else {
-			nvr_dirty_seen_at = 0;
 		}
 	}
 
