@@ -155,6 +155,7 @@ static const ini_var_t ini_vars[] =
 	{ "AUDIO_MODE", (void*)(cfg.audio_mode), STRING, 0, sizeof(cfg.audio_mode) - 1 },
 	// [MiSTer-DB9 END]
 	{ "KEYBOARD_AS_JOYSTICK", (void*)(cfg.keyboard_as_joystick), HEX32ARR, 0, 0xFFFFFFFF },
+	{ "SANITY_CHECK", (void *)(&(cfg.sanity_check)), UINT8, 0, 1 },
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
