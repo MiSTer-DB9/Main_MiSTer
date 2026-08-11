@@ -407,7 +407,7 @@ static void ApplyConfiguration(char reloadkickstart)
 
 	if (!reloadkickstart)
 	{
-		minimig_ConfigChipset(minimig_config.chipset);
+		minimig_ConfigChipset(&minimig_config);
 		minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
 	}
 
@@ -448,13 +448,13 @@ static void ApplyConfiguration(char reloadkickstart)
 		(hdd_open(2) ? 8 : 0) |
 		(hdd_open(3) ? 16 : 0));
 
-	cd_drive_open(0, minimig_config.cd32_drive.cfg ? minimig_config.cd32_drive.filename : "");
-	cd_drive_open(1, minimig_config.cdtv_drive.cfg ? minimig_config.cdtv_drive.filename : "");
+	minimig_cd_drive_open(0, minimig_config.cd32_drive.cfg ? minimig_config.cd32_drive.filename : "");
+	minimig_cd_drive_open(1, minimig_config.cdtv_drive.cfg ? minimig_config.cdtv_drive.filename : "");
 
 	minimig_ConfigMemory(memcfg);
 	minimig_ConfigCPU(minimig_config.cpu);
 
-	minimig_ConfigChipset(minimig_config.chipset);
+	minimig_ConfigChipset(&minimig_config);
 	minimig_ConfigFloppy(minimig_config.floppy.drives, minimig_config.floppy.speed);
 
 	if (minimig_config.memory & 0x40) UploadActionReplay();
@@ -834,8 +834,9 @@ void minimig_ConfigCPU(unsigned char cpu)
 	spi_uio_cmd8(UIO_MM2_CPU, cpu & 0x1f);
 }
 
-void minimig_ConfigChipset(unsigned char chipset)
+void minimig_ConfigChipset(mm_configTYPE *config)
 {
+	unsigned char chipset = config->cdtv_drive.cfg ? (config->chipset | CONFIG_CDTV) : (config->chipset & ~CONFIG_CDTV);
 	spi_uio_cmd8(UIO_MM2_CHIP, chipset & 0x3f);
 }
 
@@ -881,3 +882,66 @@ void minimig_auto_db9()
 	}
 }
 // [MiSTer-DB9 END]
+void minimig_cfg_set(int preset)
+{
+	int len;
+	switch (preset)
+	{
+	case CONFIG_PRESET_CD32:
+		minimig_config.cpu = 3; // 68020, d-cache off;
+		minimig_config.chipset = (6 << 2); // AGA
+		minimig_config.memory = 3; // ChipRAM 2MB, FastRAM 0MB
+		strcpy(minimig_config.kickstart, "Games/Amiga/CD32.rom");
+		len = strlen(minimig_config.kickstart);
+		strcpy(minimig_config.kickstart+len+1, "Games/Amiga/CD32_ext.rom");
+		minimig_config.autofire = 2 << 1; // CD32 joystick
+		minimig_config.cd32_drive.cfg = 1;
+		minimig_config.cdtv_drive.cfg = 0;
+		minimig_config.ide_cfg = 0;
+		break;
+
+	case CONFIG_PRESET_CDTV:
+		minimig_config.cpu = 0; // 68000
+		minimig_config.chipset = (2 << 2); // ECS
+		minimig_config.memory = 1; // ChipRAM 1MB, FastRAM 0MB
+		strcpy(minimig_config.kickstart, "Games/Amiga/CDTV.rom");
+		len = strlen(minimig_config.kickstart);
+		strcpy(minimig_config.kickstart + len + 1, "Games/Amiga/CDTV_ext.rom");
+		minimig_config.autofire = 0; // Digital joystick
+		minimig_config.cd32_drive.cfg = 0;
+		minimig_config.cdtv_drive.cfg = 1;
+		minimig_config.ide_cfg = 0;
+		break;
+	}
+
+	force_reload_kickstart = 1;
+}
+
+static drive_t cd32_drive = {};
+static drive_t cdtv_drive = {};
+
+int minimig_cd_drive_open(int slot, const char *filename)
+{
+	static fileTYPE cd_drive_file[2] = {};
+
+	drive_t *drv = slot ? &cdtv_drive : &cd32_drive;
+	drv->cd = 1;
+
+	const char *res = cd_drive_parse(drv, slot, filename);
+
+	int present = res ? ide_img_mount(&cd_drive_file[slot], res, 0) : 0;
+	drv->f = present ? &cd_drive_file[slot] : NULL;
+
+	const char *full = present ? res : "";
+	if (slot) cdtv_cd_set_cd_path(full);
+	else akiko_cd32_set_cd_path(full);
+
+	return present;
+}
+
+drive_t* minimig_cd_drive_get(int slot)
+{
+	drive_t *drive = slot ? &cdtv_drive : &cd32_drive;
+	if (drive->cd && (drive->chd_f || drive->f)) return drive;
+	return NULL;
+}
