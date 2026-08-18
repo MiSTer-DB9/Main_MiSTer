@@ -239,7 +239,9 @@ char is_x86()
 	if (!is_x86_type)
 	{
 		if (!strcasecmp(orig_name, "AO486") ||
-		    !strcasecmp(orig_name, "PC110")
+		    !strcasecmp(orig_name, "PC110") ||
+		    !strcasecmp(orig_name, "Z486") ||
+		    !strcasecmp(orig_name, "Z386")
 		   )
 			is_x86_type = 1;
 		else
