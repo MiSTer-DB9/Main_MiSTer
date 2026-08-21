@@ -160,7 +160,11 @@ void ide_get_regs(ide_config *ide)
 
 void ide_set_regs(ide_config *ide)
 {
-	if (!(ide->regs.status & (ATA_STATUS_BSY | ATA_STATUS_ERR))) ide->regs.status |= ATA_STATUS_DSC;
+	// Auto-assert DSC for non-CD drives only; let each ATAPI command set its own status.
+	if (!ide->drive[ide->regs.drv].cd && !(ide->regs.status & (ATA_STATUS_BSY | ATA_STATUS_ERR)))
+	{
+		ide->regs.status |= ATA_STATUS_DSC;
+	}
 
 	uint8_t data[12] =
 	{
@@ -1009,7 +1013,8 @@ void ide_io(int num, int req)
 		else if (ide->state == IDE_STATE_WAIT_PKT_RD)
 		{
 			if (ide->regs.pkt_cnt) cdrom_read(ide);
-			else cdrom_reply(ide, 0);
+			// A successful data-phase completion must report GOOD, not UNIT ATTENTION.
+			else cdrom_reply(ide, 0, 0, 0, false);
 		}
 		else if (ide->state == IDE_STATE_WAIT_PKT_MODE)
 		{
@@ -1042,7 +1047,8 @@ void ide_io(int num, int req)
 
 		ide_get_regs(ide);
 		ide->regs.head = 0;
-		ide->regs.error = 0;
+		// ATAPI posts diagnostic code 01h after a bus reset; an ATA HDD posts 0.
+		ide->regs.error = ide->drive[ide->regs.drv].cd ? 1 : 0;
 		ide->regs.sector = 1;
 		ide->regs.sector_count = 1;
 		ide->regs.cylinder = (!ide->drive[ide->regs.drv].present) ? 0xFFFF : ide->drive[ide->regs.drv].cd ? 0xEB14 : 0x0000;
