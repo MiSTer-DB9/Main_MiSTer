@@ -180,16 +180,24 @@ static int db9_class_raw(int devtype, db9_class c, int has_R)
 
 // Convention categories (DB9MD/DB15 default layout, A/B/C-first). Each J1 label
 // resolves to exactly ONE category; the factory-default passes then route the raw
-// source per category. Mirrors the audited reference in derive_preview.py.
-//   GAMEPLAY  - the "hardware" buttons; pack onto A,B,C,X,Y,Z (raw 4..9) in J1 order
+// source per category. Mirrored by porting/scripts/derive_preview.py, the reference
+// model this derive is regression-gated against (run its --self-test and --fleet
+// before shipping any change here).
+//   GAMEPLAY  - the "hardware" buttons; pack onto A,B,C,X,Y,Z (raw 4..9) in J1
+//               order (raw4 retired on a DB9MD core needing <=2 faces -- see the
+//               face budget in db9_map_factory_default)
 //   START     - Start/Run -> raw10
 //   COIN      - the credit button -> raw11 (Mode on DB9MD, reachable as Start+B on
 //               a 3-button pad); priority over SEL for raw11
 //   SEL       - Select/Mode -> raw11 if still free, else spills to a spare face
 //   SHOULDER  - L/R triggers -> fixed shoulder raw (DB9MD has none)
-//   SECONDARY - non-hardware meta buttons (Pause/Test/Start 2P/Coin 2 ...) -> spare X/Y/Z
+//   SECONDARY - non-hardware meta buttons (Pause/Test/Reset/Arcade N ...) -> raw10
+//               on DB9MD when the core declares no Start, else spare X/Y/Z
 //   NOMAP     - SaveState etc. -> unmapped (matches USB)
-enum db9_cat { CAT_GAMEPLAY = 0, CAT_NOMAP, CAT_SHOULDER, CAT_START, CAT_COIN, CAT_SEL, CAT_SECONDARY };
+//   SPILL     - the Start-2P / Coin-2 second-player duplicates. Placed like
+//               SECONDARY but never worth the Start button (see the DB9MD arm of
+//               the secondary pass).
+enum db9_cat { CAT_GAMEPLAY = 0, CAT_NOMAP, CAT_SHOULDER, CAT_START, CAT_COIN, CAT_SEL, CAT_SECONDARY, CAT_SPILL };
 
 static int ci_starts(const char *n, const char *p) { return !strncasecmp(n, p, strlen(p)); }
 static int ci_ends_b(const char *n) { size_t l = strlen(n); return l && (n[l - 1] == 'b' || n[l - 1] == 'B'); }
@@ -211,8 +219,14 @@ static db9_cat db9_category(const char *n)
 	    !strcasecmp(n, "game select")) return CAT_SEL;
 	for (size_t i = 0; i < sizeof(secondary) / sizeof(*secondary); i++)
 		if (!strcasecmp(n, secondary[i])) return CAT_SECONDARY;
-	if (strcasestr(n, "start") && strchr(n, '2')) return CAT_SECONDARY;   // Start 2P
-	if (ci_starts(n, "coin") && (strchr(n, '2') || ci_ends_b(n))) return CAT_SECONDARY; // Coin 2 / Coin B
+	if (ci_starts(n, "arcade ")) return CAT_SECONDARY;                 // cabinet extra, not a pad face
+	if (strcasestr(n, "start") && strchr(n, '2')) return CAT_SPILL;    // Start 2P
+	// Leading "1P"/"P1": the real player-1 start in a word order the ci_starts()
+	// test above misses. Anchored on the lead so a compound gameplay label merely
+	// ending in "Start1" keeps its face (MCR3Scroll "L-Button/Start1" = wheel button).
+	if (ci_starts(n, "1p") && strcasestr(n, "start")) return CAT_START;
+	if (!strcasecmp(n, "p1")) return CAT_START;                        // BankPanic's 1P start
+	if (ci_starts(n, "coin") && (strchr(n, '2') || ci_ends_b(n))) return CAT_SPILL; // Coin 2 / Coin B
 	return CAT_GAMEPLAY;
 }
 
@@ -243,16 +257,20 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 	map[0] = 0; map[1] = 1; map[2] = 2; map[3] = 3;
 	for (int s = 4; s < DB9_MAP_SLOTS; s++) map[s] = DB9_MAP_NONE;
 
-	// Pre-scan: does the core consume an R/RT shoulder button? Decides the Saturn
-	// Select/Coin source (Start+B combo when R is busy, else the Saturn R trigger).
-	// R/RT only -- Coin is its own category and never counts as an R shoulder.
-	int has_R = 0;
+	// Single pre-scan over the J1 labels, before anything is placed:
+	//   has_R   - does the core consume an R/RT shoulder? Decides the Saturn
+	//             Select/Coin source (Start+B combo when R is busy, else Saturn's
+	//             R trigger). R/RT only -- Coin never counts as an R shoulder.
+	//   face_cnt- how many buttons will land on a primary face (raw 4..9).
+	int has_R = 0, face_cnt = 0;
 	for (int k = 0; ; k++)
 	{
 		int pos;
 		const char *name = db9_slot_name(k, &pos);
 		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
-		if (!strcasecmp(name, "R") || !strcasecmp(name, "RT")) { has_R = 1; break; }
+		if (!strcasecmp(name, "R") || !strcasecmp(name, "RT")) has_R = 1;
+		int raw = db9_exact_raw(devtype, name);
+		if ((raw >= 4 && raw <= 9) || (raw < 0 && db9_category(name) == CAT_GAMEPLAY)) face_cnt++;
 	}
 
 	// Pass 1: exact label->pad-button matches (same-family: lossless) claim their
@@ -260,6 +278,17 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 	// exact->raw6, "Z"->raw9, "Start"->raw10, "Mode"->raw11 ...) and a later
 	// category pass can never double-book a button the core names outright.
 	uint16_t used = 0;   // bitmask of claimed raw bits (raw <= 13)
+	// Face budget: a 2-button Master System / Atari pad on DB9MD drives only
+	// raw5(B)/raw6(C) -- joydb9md.v reads a pad that doesn't answer the MD select
+	// protocol as "A/B as Master System" and forces raw4(A) and raw10(Start) to 0.
+	// So on a core needing at most two faces, retire raw4 up front: the one default
+	// then fits BOTH pad types, which is what the pre-matrix fixed perms did. Cores
+	// needing 3+ faces keep raw4 (unplayable on a 2-button pad either way, and A,B,C
+	// is their natural layout); the cost there is A idle on a 6-button MD pad, since
+	// the matrix cannot OR two sources into one slot. Redefinable in "Define DB9
+	// buttons". Marking it used is all it takes -- every placement pass below already
+	// skips claimed bits.
+	if (devtype == DB9_DEV_DB9MD && face_cnt <= 2) used |= 1u << 4;
 	for (int k = 0; ; k++)
 	{
 		int pos;
@@ -300,7 +329,8 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 
 	// Category passes, in the order that fixes the raw budget:
 	//   START(10) -> COIN(11) -> SEL(11 if free) -> SHOULDER -> GAMEPLAY(4..9)
-	//   -> SECONDARY (+ COIN/SEL that lost the r11 race) on spare faces 7..9.
+	//   -> SECONDARY/SPILL (raw10 if still free on DB9MD, else spare faces 7..9;
+	//   joined by the COIN/SEL that lost the r11 race).
 	// Gameplay runs before secondary so the "hardware" buttons claim A,B,C first
 	// and a <=3-button core stays 3-button-playable. Coin beats Select for r11.
 	each([&](int slot, const char *, db9_cat cat) {
@@ -323,8 +353,16 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 		}
 	});
 	each([&](int slot, const char *, db9_cat cat) {
-		if (cat == CAT_SECONDARY || cat == CAT_SEL || cat == CAT_COIN)
+		if (cat == CAT_SECONDARY || cat == CAT_SPILL || cat == CAT_SEL || cat == CAT_COIN)
 		{
+			// DB9MD: X,Y,Z don't exist on a 3-button pad, so a Pause/Reset parked
+			// there is unreachable. raw10 (Start) is a real, comfortable button and
+			// is free exactly when the core declares no Start label (CAT_START runs
+			// first and always wins it) -- which is what the old fixed perms used.
+			// CAT_SPILL (2P Start / Coin 2) is excluded: parking a second-player
+			// duplicate there while the real start sits on an X/Y/Z reads backwards.
+			if (devtype == DB9_DEV_DB9MD && cat == CAT_SECONDARY && !(used & (1u << 10)))
+			{ map[slot] = 10; used |= 1u << 10; return; }
 			int raw = db9_next_free_face_raw(used, 7);    // spare X,Y,Z faces -- gameplay owns 4..6
 			if (raw >= 0) { map[slot] = (uint8_t)raw; used |= 1u << raw; }
 		}
