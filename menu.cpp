@@ -6351,9 +6351,10 @@ void HandleUI(void)
 			}
 
 			MenuWrite(m++);
-			MenuWrite(m++, " Save configuration        \x16", menusub == 11, 0);
+			MenuWrite(m++, " Load preset               \x16", menusub == 11, 0);
 			MenuWrite(m++, " Load configuration        \x16", menusub == 12, 0);
-			MenuWrite(m++, " Load preset               \x16", menusub == 13, 0);
+			MenuWrite(m++, " Save configuration        \x16", menusub == 13, 0);
+			MenuWrite(m++);
 
 			while (m < 14) MenuWrite(m++);
 			MenuWrite(m++, " Reset", menusub == 14, 0);
@@ -6479,7 +6480,7 @@ void HandleUI(void)
 				else if (menusub == 11)
 				{
 					menusub = 0;
-					menustate = MENU_MINIMIG_SAVECONFIG1;
+					menustate = MENU_MINIMIG_PRESET1;
 				}
 				else if (menusub == 12)
 				{
@@ -6489,7 +6490,7 @@ void HandleUI(void)
 				else if (menusub == 13)
 				{
 					menusub = 0;
-					menustate = MENU_MINIMIG_PRESET1;
+					menustate = MENU_MINIMIG_SAVECONFIG1;
 				}
 				else if (menusub == 14)
 				{
@@ -6692,13 +6693,13 @@ void HandleUI(void)
 
 			if (menusub<10) minimig_cfg_save(menusub);
 			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 11;
+			menusub = 13;
 		}
 		else
 		if (menu || left) // exit menu
 		{
 			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 11;
+			menusub = 13;
 		}
 		break;
 
@@ -6762,13 +6763,13 @@ void HandleUI(void)
 			else if (menusub == 8)
 			{
 				menustate = MENU_MINIMIG_MAIN1;
-				menusub = 13;
+				menusub = 11;
 			}
 		}
 		if (menu || left)
 		{
 			menustate = MENU_MINIMIG_MAIN1;
-			menusub = 13;
+			menusub = 11;
 		}
 		break;
 
@@ -6783,6 +6784,8 @@ void HandleUI(void)
 		m = 0;
 		strcpy(s, " CPU      : ");
 		strcat(s, config_cpu_msg[minimig_config.cpu & 0x03]);
+		if ((minimig_config.cpu & 0x23) == 0x23) strcat(s, " ~14MHz");
+		if ((minimig_config.cpu & 0x23) == 0x03) strcat(s, " Fast");
 		OsdWrite(m++, s, menusub == 0, 0);
 		strcpy(s, " D-Cache  : ");
 		strcat(s, (minimig_config.cpu & 16) ? "On" : "Off");
@@ -6866,18 +6869,15 @@ void HandleUI(void)
 		{
 			if (menusub == 0)
 			{
-				int cpu = minimig_config.cpu & 3;
-				if (minus)
-				{
-					cpu = (cpu == 0) ? 3 : (cpu == 3) ? 1 : 0;
-				}
-				else
-				{
-					cpu = (cpu == 0) ? 1 : (cpu == 1) ? 3 : 0;
-				}
+				static const unsigned char cpu_steps[4] = { 0, 1, 3, 0x23 };
+				int step = ((minimig_config.cpu & 3) == 0) ? 0 :
+				           ((minimig_config.cpu & 3) == 1) ? 1 :
+				           (minimig_config.cpu & 0x20) ? 3 : 2;
+
+				step = (step + (minus ? 3 : 1)) & 3;
 
 				menustate = MENU_MINIMIG_CHIPSET1;
-				minimig_config.cpu = (minimig_config.cpu & 0xfc) | cpu;
+				minimig_config.cpu = (minimig_config.cpu & 0xdc) | cpu_steps[step];
 				minimig_ConfigCPU(minimig_config.cpu);
 			}
 			else if (menusub == 1 && (minimig_config.cpu & 0x2))
