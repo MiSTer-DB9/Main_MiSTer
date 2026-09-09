@@ -123,6 +123,7 @@ typedef struct {
 	uint8_t audio_mode_id;
 	// [MiSTer-DB9 END]
 	uint32_t keyboard_as_joystick[256];
+	uint8_t sanity_check;
 } cfg_t;
 
 extern cfg_t cfg;
