@@ -277,7 +277,7 @@ const char* GetUARTbaud_label(int mode, int idx);
 int GetUARTbaud_idx(int mode);
 uint32_t ValidateUARTbaud(int mode, uint32_t baud);
 char * GetMidiLinkSoundfont();
-void user_io_store_filename(char *filename);
+void user_io_store_filename(const char *filename);
 int user_io_use_cheats();
 
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: shared memory for DB9/DB15/Saturn detection
@@ -312,6 +312,8 @@ char is_menu();
 char is_x86();
 char is_snes();
 char is_sgb();
+char is_apple2();
+char user_io_a2_woz_enabled();
 char is_neogeo();
 char is_neogeo_cd();
 char is_megacd();
