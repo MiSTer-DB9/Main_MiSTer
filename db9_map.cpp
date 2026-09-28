@@ -180,7 +180,7 @@ static int db9_class_raw(int devtype, db9_class c, int has_R)
 
 // Convention categories (DB9MD/DB15 default layout, A/B/C-first). Each J1 label
 // resolves to exactly ONE category; the factory-default passes then route the raw
-// source per category. Mirrored by porting/scripts/derive_preview.py, the reference
+// source per category. Mirrored by Forks_MiSTer/porting/derive_preview.py, the reference
 // model this derive is regression-gated against (run its --self-test and --fleet
 // before shipping any change here).
 //   GAMEPLAY  - the "hardware" buttons; pack onto A,B,C,X,Y,Z (raw 4..9) in J1
