@@ -368,6 +368,21 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 		}
 	});
 
+	// Coin with no home left: Pass 1 gave r11 to an exact Select/Mode label (DB15
+	// "Select" on NeoGeo) and every spare face is taken. Share r11 with that
+	// Select so the pad still credits a coin (MVS original BIOS has no other way;
+	// the pre-matrix perm fed Coin from r11). One raw source may feed two slots.
+	int sel_on_11 = 0;
+	for (int k = 0; ; k++)
+	{
+		int pos;
+		const char *name = db9_slot_name(k, &pos);
+		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
+		if (map[pos + 4] == 11 && db9_category(name) == CAT_SEL) sel_on_11 = 1;
+	}
+	if (sel_on_11)
+		each([&](int slot, const char *, db9_cat cat) { if (cat == CAT_COIN) map[slot] = 11; });
+
 	// Anything still unmapped (SaveState, an overflow keypad/peripheral button on a
 	// >6-button core, Select with no spare face) stays unmapped -- same as USB,
 	// where map_joystick leaves unresolved J1 entries unbound until Define.
