@@ -180,7 +180,7 @@ static int db9_class_raw(int devtype, db9_class c, int has_R)
 
 // Convention categories (DB9MD/DB15 default layout, A/B/C-first). Each J1 label
 // resolves to exactly ONE category; the factory-default passes then route the raw
-// source per category. Mirrored by porting/scripts/derive_preview.py, the reference
+// source per category. Mirrored by Forks_MiSTer/porting/derive_preview.py, the reference
 // model this derive is regression-gated against (run its --self-test and --fleet
 // before shipping any change here).
 //   GAMEPLAY  - the "hardware" buttons; pack onto A,B,C,X,Y,Z (raw 4..9) in J1
@@ -262,6 +262,22 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 	//             Select/Coin source (Start+B combo when R is busy, else Saturn's
 	//             R trigger). R/RT only -- Coin never counts as an R shoulder.
 	//   face_cnt- how many buttons will land on a primary face (raw 4..9).
+	// "Run" is TG16's Start. On a core that also names a real Start it is a
+	// gameplay button (baseball "Run" in Koshien), not a second Start that loses
+	// raw10 and ends unmapped.
+	int has_start = 0;
+	for (int k = 0; ; k++)
+	{
+		int pos;
+		const char *name = db9_slot_name(k, &pos);
+		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
+		if (db9_category(name) == CAT_START && strcasecmp(name, "run")) has_start = 1;
+	}
+	auto cat_of = [&](const char *n) -> db9_cat {
+		db9_cat c = db9_category(n);
+		return (c == CAT_START && has_start && !strcasecmp(n, "run")) ? CAT_GAMEPLAY : c;
+	};
+
 	int has_R = 0, face_cnt = 0;
 	for (int k = 0; ; k++)
 	{
@@ -270,7 +286,7 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
 		if (!strcasecmp(name, "R") || !strcasecmp(name, "RT")) has_R = 1;
 		int raw = db9_exact_raw(devtype, name);
-		if ((raw >= 4 && raw <= 9) || (raw < 0 && db9_category(name) == CAT_GAMEPLAY)) face_cnt++;
+		if ((raw >= 4 && raw <= 9) || (raw < 0 && cat_of(name) == CAT_GAMEPLAY)) face_cnt++;
 	}
 
 	// Pass 1: exact label->pad-button matches (same-family: lossless) claim their
@@ -323,7 +339,7 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 			int slot = pos + 4;
 			if (slot > DB9_MAP_BTN_LAST) break;
 			if (map[slot] != DB9_MAP_NONE) continue;
-			place(slot, name, db9_category(name));
+			place(slot, name, cat_of(name));
 		}
 	};
 
@@ -367,6 +383,21 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 			if (raw >= 0) { map[slot] = (uint8_t)raw; used |= 1u << raw; }
 		}
 	});
+
+	// Coin with no home left: Pass 1 gave r11 to an exact Select/Mode label (DB15
+	// "Select" on NeoGeo) and every spare face is taken. Share r11 with that
+	// Select so the pad still credits a coin (MVS original BIOS has no other way;
+	// the pre-matrix perm fed Coin from r11). One raw source may feed two slots.
+	int sel_on_11 = 0;
+	for (int k = 0; ; k++)
+	{
+		int pos;
+		const char *name = db9_slot_name(k, &pos);
+		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
+		if (map[pos + 4] == 11 && cat_of(name) == CAT_SEL) sel_on_11 = 1;
+	}
+	if (sel_on_11)
+		each([&](int slot, const char *, db9_cat cat) { if (cat == CAT_COIN) map[slot] = 11; });
 
 	// Anything still unmapped (SaveState, an overflow keypad/peripheral button on a
 	// >6-button core, Select with no spare face) stays unmapped -- same as USB,
