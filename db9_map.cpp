@@ -262,6 +262,22 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 	//             Select/Coin source (Start+B combo when R is busy, else Saturn's
 	//             R trigger). R/RT only -- Coin never counts as an R shoulder.
 	//   face_cnt- how many buttons will land on a primary face (raw 4..9).
+	// "Run" is TG16's Start. On a core that also names a real Start it is a
+	// gameplay button (baseball "Run" in Koshien), not a second Start that loses
+	// raw10 and ends unmapped.
+	int has_start = 0;
+	for (int k = 0; ; k++)
+	{
+		int pos;
+		const char *name = db9_slot_name(k, &pos);
+		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
+		if (db9_category(name) == CAT_START && strcasecmp(name, "run")) has_start = 1;
+	}
+	auto cat_of = [&](const char *n) -> db9_cat {
+		db9_cat c = db9_category(n);
+		return (c == CAT_START && has_start && !strcasecmp(n, "run")) ? CAT_GAMEPLAY : c;
+	};
+
 	int has_R = 0, face_cnt = 0;
 	for (int k = 0; ; k++)
 	{
@@ -270,7 +286,7 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
 		if (!strcasecmp(name, "R") || !strcasecmp(name, "RT")) has_R = 1;
 		int raw = db9_exact_raw(devtype, name);
-		if ((raw >= 4 && raw <= 9) || (raw < 0 && db9_category(name) == CAT_GAMEPLAY)) face_cnt++;
+		if ((raw >= 4 && raw <= 9) || (raw < 0 && cat_of(name) == CAT_GAMEPLAY)) face_cnt++;
 	}
 
 	// Pass 1: exact label->pad-button matches (same-family: lossless) claim their
@@ -323,7 +339,7 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 			int slot = pos + 4;
 			if (slot > DB9_MAP_BTN_LAST) break;
 			if (map[slot] != DB9_MAP_NONE) continue;
-			place(slot, name, db9_category(name));
+			place(slot, name, cat_of(name));
 		}
 	};
 
@@ -378,7 +394,7 @@ void db9_map_factory_default(int devtype, uint8_t *map)
 		int pos;
 		const char *name = db9_slot_name(k, &pos);
 		if (!name || pos + 4 > DB9_MAP_BTN_LAST) break;
-		if (map[pos + 4] == 11 && db9_category(name) == CAT_SEL) sel_on_11 = 1;
+		if (map[pos + 4] == 11 && cat_of(name) == CAT_SEL) sel_on_11 = 1;
 	}
 	if (sel_on_11)
 		each([&](int slot, const char *, db9_cat cat) { if (cat == CAT_COIN) map[slot] = 11; });
