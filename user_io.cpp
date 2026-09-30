@@ -3016,6 +3016,16 @@ static void user_io_joyraw_check_change()
 	uint16_t joyraw = spi_w(0);
 	DisableIO();
 
+	// DB9 button edges count as user activity so hdmi_off / CEC sleep do not
+	// blank the screen during DB9-only play (gameplay input never reaches Main).
+	static uint16_t act_bits = 0;
+	if ((joyraw ^ act_bits) & 0x3FFF) register_activity();
+	act_bits = joyraw;
+	// The core reports joy_raw ungated (needed for the activity check above);
+	// reapply the old OSD_STATUS gate here so everything below sees the same
+	// input as before. The Menu core was never gated.
+	if (!is_menu() && !user_io_osd_is_visible()) joyraw = 0;
+
 	// XOR detects changes across all 16 bits (14 buttons at [13:0] + 2 type at [15:14]).
 	uint16_t changes = (joyraw ^ joyraw_bits) & 0xFFFF;
 
