@@ -5814,7 +5814,11 @@ void HandleUI(void)
 			OsdWrite(m++, s);
 
 			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-			int has_mt32port = (is_minimig() || is_st()) ? (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 0x40) : 0;
+			// Minimig moved its SECOND_MT32 indicator to bit 9 because upstream took
+			// bits 8:6 for MiSTer Floppy status. Bit 6 stays accepted until the stable
+			// Minimig RBF carries bit 9, so USERIO2 builds keep the port selector.
+			int has_mt32port = is_minimig() ? (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 0x240) :
+				is_st() ? (spi_uio_cmd16(UIO_GET_OSDMASK, 0) & 0x40) : 0;
 			if (has_mt32port) {
 				OsdWrite(m++);
 				strcpy(s, " MT32-pi Port:   ");
