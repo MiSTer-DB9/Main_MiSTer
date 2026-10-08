@@ -3672,8 +3672,8 @@ void user_io_send_buttons(char force)
 	if (cfg.dvi_mode == 1) map |= CONF_DVI;
 	if (cfg.hdmi_limited & 1) map |= CONF_HDMI_LIMITED1;
 	if (cfg.hdmi_limited & 2) map |= CONF_HDMI_LIMITED2;
-	if (cfg.direct_video) map |= CONF_DIRECT_VIDEO;
-	if (cfg.direct_video == 2) map |= CONF_DIRECT_VIDEO2;
+	if (video_is_direct()) map |= CONF_DIRECT_VIDEO;
+	if (video_is_direct() && cfg.direct_video == 2) map |= CONF_DIRECT_VIDEO2;
 	if (vga_fb) map |= CONF_VGA_FB;
 	// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0] audio routing
 	if (cfg.audio_mode_id == 1) map |= CONF_AUDIO_MODE_I2S;
