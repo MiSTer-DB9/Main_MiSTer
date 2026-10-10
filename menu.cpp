@@ -918,8 +918,6 @@ static void vga_nag()
 		int n = 0;
 		OsdWrite(n++);
 		OsdWrite(n++);
-		OsdWrite(n++);
-		OsdWrite(n++);
 		OsdWrite(n++, "  If you see this, then you");
 		OsdWrite(n++, "  need to modify MiSTer.ini");
 		OsdWrite(n++);
