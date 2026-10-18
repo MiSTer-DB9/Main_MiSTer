@@ -423,6 +423,7 @@ void BootInit()
 		BootPrintEx(" ");
 	}
 
+	minimig_dsnd_load();
 	minimig_config.kickstart[0] = 0;
 	minimig_cfg_load(0);
 	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: auto-enable UserIO on core launch

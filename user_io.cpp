@@ -440,6 +440,13 @@ char is_marty()
 	return (is_marty_type == 1);
 }
 
+static int is_pcfx_type = 0;
+char is_pcfx()
+{
+	if (!is_pcfx_type) is_pcfx_type = strcasecmp(orig_name, "PCFX") ? 2 : 1;
+	return (is_pcfx_type == 1);
+}
+
 static int is_saturn_type = 0;
 char is_saturn()
 {
@@ -505,6 +512,7 @@ void user_io_read_core_name()
 	is_electron_type = 0;
 	is_saturn_type = 0;
 	is_marty_type = 0;
+	is_pcfx_type = 0;
 	is_n64_type = 0;
 	is_uneon_type = 0;
 	core_name[0] = 0;
@@ -633,7 +641,7 @@ void user_io_status_set(const char *opt, uint32_t value, int ex)
 
 	if (!is_st())
 	{
-		uint32_t ext = minimig_get_extcfg();
+		uint32_t ext = minimig_core_extcfg();
 		spi_uio_cmd_cont(UIO_SET_STATUS2);
 		for (uint32_t i = 0; i < sizeof(cur_status); i += 2) spi_w((is_minimig() && (i >> 2) == 1) ? (uint16_t)(ext >> ((i & 2) << 3)) : (cur_status[i + 1] << 8) | cur_status[i]);
 		DisableIO();
@@ -1044,6 +1052,10 @@ static void parse_config()
 					else if (is_marty())
 					{
 						marty_set_image(idx, str);
+					}
+					else if (is_pcfx())
+					{
+						pcfx_set_image(idx, str);
 					}
 					else
 					{
@@ -1945,6 +1957,7 @@ void user_io_init(const char *path, const char *xml)
 					if (is_uneon()) x86_ide_set();
 					if (is_cdi()) cdi_load_root_nvram();
 					if (is_marty()) marty_init();
+					if (is_pcfx()) pcfx_init();
 
 					if (!strlen(path) || !user_io_file_tx(path, 0, 0, 0, 1))
 					{
@@ -2043,6 +2056,7 @@ void user_io_init(const char *path, const char *xml)
 
 		send_rtc(3);
 		if (is_marty() && xml && isXmlName(xml) == 2) marty_mgl_premount();
+		if (is_pcfx() && xml && isXmlName(xml) == 2) pcfx_mgl_premount();
 
 		// release reset
 		if (!is_minimig() && !is_st()) user_io_status_set("[0]", 0);
@@ -3889,6 +3903,8 @@ void user_io_poll()
 					blksz = 2352;   // Mac CD-DA: one whole frame per transaction
 				else if (is_marty())
 					blksz = marty_block_size(disk, 128 << ((c >> 6) & 7));
+				else if (is_pcfx() && disk == PCFX_SLOT_CD)
+					blksz = PCFX_CD_BLOCK;
 				else
 					blksz = 128 << ((c >> 6) & 7);
 
@@ -3976,6 +3992,10 @@ void user_io_poll()
 			{
 				if (mop < 0) break;
       }
+			else if (int pop = pcfx_sd_service(disk, op, (uint32_t)lba, sz, ack))
+			{
+				if (pop < 0) break;
+			}
 			else if (int a3op = a3_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
 			{
 				if (a3op < 0) break;
@@ -4481,6 +4501,7 @@ void user_io_poll()
 	if (is_pce()) pcecd_poll();
 	if (is_saturn()) saturn_poll();
 	if (is_marty()) marty_poll();
+	if (is_pcfx()) pcfx_poll();
 	if (is_cdi()) cdi_poll();
 	if (is_psx()) psx_poll();
 	if (is_neogeo_cd()) neocd_poll();

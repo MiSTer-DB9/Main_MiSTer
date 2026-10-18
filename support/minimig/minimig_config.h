@@ -113,6 +113,9 @@ void minimig_ConfigUserPort(mm_userportMode mode);
 
 void minimig_set_extcfg(unsigned int ext_cfg);
 unsigned int minimig_get_extcfg();
+unsigned int minimig_core_extcfg();
+void minimig_dsnd_load();
+int minimig_dsnd_loaded();
 
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 void minimig_auto_db9();
