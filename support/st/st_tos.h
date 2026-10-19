@@ -106,4 +106,7 @@ void tos_set_extctrl(uint32_t ext_ctrl);
 void tos_auto_db9();
 // [MiSTer-DB9 END]
 
+// Applies one MGL <file> item. Returns 0 if no ST slot claims it.
+int tos_mgl_load(char type, int index, const char *path);
+
 #endif
