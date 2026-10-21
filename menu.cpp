@@ -7074,7 +7074,7 @@ void HandleUI(void)
 		strcat(s, a2065_iface_msg(a2065_get_iface()));
 		OsdWrite(m++, s, menusub == 9, 0);
 		sprintf(s, " FDD Turbo: %s", minimig_config.floppy.speed ? "On" : "Off");
-		MenuWrite(m++, s, menusub == 10, 0);
+		OsdWrite(m++, s, menusub == 10, 0);
 
 		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players appended after upstream items
 		{
