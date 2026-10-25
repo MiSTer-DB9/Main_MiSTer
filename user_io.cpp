@@ -1762,6 +1762,7 @@ void user_io_init(const char *path, const char *xml)
 	next_enet_stop();
 	sun_enet_stop();
 	hp9k_enet_stop();
+	sgi_enet_stop();
 
 	// we need to set the directory to where the XML file (MRA) is
 	// not the RBF. The RBF will be in arcade, which the user shouldn't
@@ -1937,6 +1938,7 @@ void user_io_init(const char *path, const char *xml)
 				// before the boot ROMs: the Sun-2's ID PROM goes in while it is held in reset
 				if (is_sun_family()) sun_enet_start();
 				if (is_hp9k_family()) hp9k_enet_start();
+				if (is_sgi_family()) sgi_enet_start();
 
 				if (xml && isXmlName(xml) == 1)
 				{
@@ -2594,6 +2596,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 				// Sun CD slot: CUE/CHD/raw image translation (support/sun)
 				if (ret) ret = sun_mount_hook(index, name, &sd_image[index], &writable);
 				if (ret) ret = hp9k_mount_hook(index, name, &sd_image[index], &writable);
+				if (ret) ret = sgi_mount_hook(index, name, &sd_image[index], &writable);
 			if (ret) ret = next_mount_hook(index, name, &sd_image[index], &writable);
 				if (ret) ret = a3_mount_hook(index, name, &sd_image[index], &writable);
 
@@ -2620,6 +2623,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 		mac_cdrom_unmount(index);
 		sun_unmount(index);
 		hp9k_unmount(index);
+		sgi_unmount(index);
 		next_unmount(index);
 		a3_unmount(index);
 		falcon_scsi_unmount(index);
@@ -3819,6 +3823,7 @@ void user_io_poll()
 	mac_poll();   // Mac SCSI family: Toolbox slot announce + deferred CD work
 	sun_poll();   // Sun SCSI family: write-buffer flushes
 	hp9k_poll();
+	sgi_poll();
 
 	if (is_minimig())
 	{
@@ -3863,6 +3868,7 @@ void user_io_poll()
 	next_enet_poll();
 	sun_enet_poll();
 	hp9k_enet_poll();
+	sgi_enet_poll();
 
 	// The NeXT keeps a battery backed clock that the guest reads at
 	// boot; the one-shot update at core load is not enough if the core
@@ -4012,6 +4018,10 @@ void user_io_poll()
 			else if (int hpop = hp9k_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
 			{
 				if (hpop < 0) break;
+			}
+			else if (int sgop = sgi_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
+			{
+				if (sgop < 0) break;
 			}
 			else if (int mop = marty_sd_service(disk, op, (uint32_t)lba, sz, ack))
 			{
