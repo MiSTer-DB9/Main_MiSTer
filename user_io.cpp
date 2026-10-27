@@ -1872,7 +1872,7 @@ void user_io_init(const char *path, const char *xml)
 	load_volume();
 
 	user_io_send_buttons(1);
-	if (xml && isXmlName(xml) == 2) mgl_parse(xml);
+	if (xml && isXmlName(xml)) mgl_parse(xml);
 
 	switch (core_type)
 	{
@@ -2498,7 +2498,7 @@ void user_io_file_info(const char *ext)
 	DisableFpga();
 }
 
-int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_size)
+int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_size, int image)
 {
 	int writable = 0;
 	int ret = 0;
@@ -2630,7 +2630,11 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 	}
 
 	buffer_lba[index] = -1;
-	pc88_mount(index);
+	if (!pc88_mount(index, ret ? &sd_image[index] : NULL, name, image, &writable))
+	{
+		FileClose(&sd_image[index]);
+		ret = 0;
+	}
 	if (!index || is_cdi() || (is_saturn() && index==1)) use_save = pre;
 
 	if (!ret)
@@ -2666,7 +2670,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 	EnableIO();
 	spi8(UIO_SET_SDINFO);
 
-	__off64_t size = sd_image[index].size;
+	__off64_t size = pc88_size(index, sd_image[index].size);
 	if (!ret && pre)
 	{
 		sd_image[index].type = 2;
