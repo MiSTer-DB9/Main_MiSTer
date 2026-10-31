@@ -26,6 +26,15 @@
 
 #include  "miniz.h"
 
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+/* The decoder keeps zstd's default window limit (ZSTD_WINDOWLOG_LIMIT_DEFAULT, 2^27 = 128 MB).
+   Its buffer is min(window, frame content size), and a lower limit would reject archives written
+   at the highest levels (window log 25 to 27), so it is not lowered. */
+#include "zstd.h"
+#endif
+/* [MiSTer-DB9 END] */
+
 typedef unsigned char mz_validate_uint16[sizeof(mz_uint16) == 2 ? 1 : -1];
 typedef unsigned char mz_validate_uint32[sizeof(mz_uint32) == 4 ? 1 : -1];
 typedef unsigned char mz_validate_uint64[sizeof(mz_uint64) == 8 ? 1 : -1];
@@ -4059,7 +4068,17 @@ mz_bool mz_zip_reader_is_file_supported(mz_zip_archive *pZip, mz_uint file_index
     method = MZ_READ_LE16(p + MZ_ZIP_CDH_METHOD_OFS);
     bit_flag = MZ_READ_LE16(p + MZ_ZIP_CDH_BIT_FLAG_OFS);
 
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+    /* zstd entries decode only through the mz_zip_reader_extract_iter_* functions; the other
+       extract functions and mz_zip_validate_file still return MZ_ZIP_UNSUPPORTED_METHOD. */
+    if ((method != 0) && (method != MZ_DEFLATED) && (!MZ_IS_ZSTD(method)))
+#else
+/* [MiSTer-DB9 END] */
     if ((method != 0) && (method != MZ_DEFLATED))
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#endif
+/* [MiSTer-DB9 END] */
     {
         mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_METHOD);
         return MZ_FALSE;
@@ -4829,8 +4848,17 @@ mz_zip_reader_extract_iter_state* mz_zip_reader_extract_iter_new(mz_zip_archive 
         return NULL;
     }
 
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+    /* This function only supports decompressing stored, deflate and zstd. */
+    if ((!(flags & MZ_ZIP_FLAG_COMPRESSED_DATA)) && (pState->file_stat.m_method != 0) && (pState->file_stat.m_method != MZ_DEFLATED) && (!MZ_IS_ZSTD(pState->file_stat.m_method)))
+#else
+/* [MiSTer-DB9 END] */
     /* This function only supports decompressing stored and deflate. */
     if ((!(flags & MZ_ZIP_FLAG_COMPRESSED_DATA)) && (pState->file_stat.m_method != 0) && (pState->file_stat.m_method != MZ_DEFLATED))
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#endif
+/* [MiSTer-DB9 END] */
     {
         mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_METHOD);
         pZip->m_pFree(pZip->m_pAlloc_opaque, pState);
@@ -4851,6 +4879,11 @@ mz_zip_reader_extract_iter_state* mz_zip_reader_extract_iter_new(mz_zip_archive 
     pState->pRead_buf = NULL;
     pState->pWrite_buf = NULL;
     pState->out_blk_remain = 0;
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+    pState->pZstd_stream = NULL;
+#endif
+/* [MiSTer-DB9 END] */
 
     /* Read and parse the local directory entry. */
     pState->cur_file_ofs = pState->file_stat.m_local_header_ofs;
@@ -4905,6 +4938,33 @@ mz_zip_reader_extract_iter_state* mz_zip_reader_extract_iter_new(mz_zip_archive 
         pState->comp_remaining = pState->file_stat.m_comp_size;
     }
 
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+    if ((!(flags & MZ_ZIP_FLAG_COMPRESSED_DATA)) && (MZ_IS_ZSTD(pState->file_stat.m_method)) && (!pState->file_stat.m_comp_size))
+    {
+        /* A writer may emit an empty file as a zstd entry with no compressed data, which is not
+           a valid zstd frame: nothing to decode, the size and CRC checks in
+           mz_zip_reader_extract_iter_free still run. */
+        pState->status = TINFL_STATUS_DONE;
+    }
+    else if ((!(flags & MZ_ZIP_FLAG_COMPRESSED_DATA)) && (MZ_IS_ZSTD(pState->file_stat.m_method)))
+    {
+        /* zstd decompresses straight into the caller's buffer, no write buffer needed */
+        ZSTD_DStream *zds = ZSTD_createDStream();
+        if (!zds)
+        {
+            mz_zip_set_error(pZip, MZ_ZIP_ALLOC_FAILED);
+            if (!pZip->m_pState->m_pMem)
+                pZip->m_pFree(pZip->m_pAlloc_opaque, pState->pRead_buf);
+            pZip->m_pFree(pZip->m_pAlloc_opaque, pState);
+            return NULL;
+        }
+        pState->pZstd_stream = zds;
+        pState->status = TINFL_STATUS_NEEDS_MORE_INPUT;
+    }
+    else
+#endif
+/* [MiSTer-DB9 END] */
     if (!((flags & MZ_ZIP_FLAG_COMPRESSED_DATA) || (!pState->file_stat.m_method)))
     {
         /* Decompression required, init decompressor */
@@ -4979,6 +5039,81 @@ size_t mz_zip_reader_extract_iter_read(mz_zip_reader_extract_iter_state* pState,
         pState->out_buf_ofs += copied_to_caller;
         pState->comp_remaining -= copied_to_caller;
     }
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+    else if (MZ_IS_ZSTD(pState->file_stat.m_method))
+    {
+        /* pZstd_stream is NULL for an empty entry, whose status is already DONE: the loop below
+           never runs and nothing is returned. */
+        ZSTD_outBuffer out = { pvBuf, buf_size, 0 };
+
+        while ((out.pos < out.size) && (pState->status == TINFL_STATUS_NEEDS_MORE_INPUT))
+        {
+            ZSTD_inBuffer in;
+            size_t prev_pos = out.pos, ret;
+            mz_bool input_end;
+
+            /* Refill the read buffer from file once it is drained */
+            if ((!pState->read_buf_avail) && (!pState->pZip->m_pState->m_pMem) && (pState->comp_remaining))
+            {
+                pState->read_buf_avail = MZ_MIN(pState->read_buf_size, pState->comp_remaining);
+                if (pState->pZip->m_pRead(pState->pZip->m_pIO_opaque, pState->cur_file_ofs, pState->pRead_buf, (size_t)pState->read_buf_avail) != pState->read_buf_avail)
+                {
+                    mz_zip_set_error(pState->pZip, MZ_ZIP_FILE_READ_FAILED);
+                    pState->status = TINFL_STATUS_FAILED;
+                    break;
+                }
+                pState->cur_file_ofs += pState->read_buf_avail;
+                pState->comp_remaining -= pState->read_buf_avail;
+                pState->read_buf_ofs = 0;
+            }
+
+            in.src = (const mz_uint8 *)pState->pRead_buf + pState->read_buf_ofs;
+            in.size = (size_t)pState->read_buf_avail;
+            in.pos = 0;
+            ret = ZSTD_decompressStream((ZSTD_DStream *)pState->pZstd_stream, &out, &in);
+            pState->read_buf_avail -= in.pos;
+            pState->read_buf_ofs += in.pos;
+
+            if (ZSTD_isError(ret))
+            {
+                mz_zip_set_error(pState->pZip, MZ_ZIP_DECOMPRESSION_FAILED);
+                pState->status = TINFL_STATUS_FAILED;
+                break;
+            }
+
+            /* All compressed input consumed? (in memory mode comp_remaining is not decremented) */
+            input_end = (!pState->read_buf_avail) && (pState->pZip->m_pState->m_pMem || !pState->comp_remaining);
+            if (input_end)
+            {
+                if (!ret)
+                    pState->status = TINFL_STATUS_DONE; /* last frame complete and flushed */
+                else if (out.pos == prev_pos)
+                {
+                    /* Truncated stream: no input left and no progress */
+                    mz_zip_set_error(pState->pZip, MZ_ZIP_DECOMPRESSION_FAILED);
+                    pState->status = TINFL_STATUS_FAILED;
+                }
+            }
+        }
+
+        /* Never hand the caller bytes past the declared size: return only the in-bounds part and fail */
+        copied_to_caller = out.pos;
+        if (copied_to_caller > pState->file_stat.m_uncomp_size - pState->out_buf_ofs)
+        {
+            copied_to_caller = (size_t)(pState->file_stat.m_uncomp_size - pState->out_buf_ofs);
+            mz_zip_set_error(pState->pZip, MZ_ZIP_DECOMPRESSION_FAILED);
+            pState->status = TINFL_STATUS_FAILED;
+        }
+
+#ifndef MINIZ_DISABLE_ZIP_READER_CRC32_CHECKS
+        pState->file_crc32 = (mz_uint32)mz_crc32(pState->file_crc32, (const mz_uint8 *)pvBuf, copied_to_caller);
+#endif
+
+        pState->out_buf_ofs += copied_to_caller;
+    }
+#endif
+/* [MiSTer-DB9 END] */
     else
     {
         do
@@ -5061,6 +5196,19 @@ mz_bool mz_zip_reader_extract_iter_free(mz_zip_reader_extract_iter_state* pState
     if ((!pState) || (!pState->pZip) || (!pState->pZip->m_pState))
         return MZ_FALSE;
 
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+    /* A caller that stops at the declared size (or reads nothing of an empty entry) can leave the
+       end of the zstd frame unread. Consume it so the size and CRC checks below still run;
+       any output past the declared size marks the entry as failed. */
+    if ((pState->pZstd_stream) && (pState->status == TINFL_STATUS_NEEDS_MORE_INPUT) && (pState->out_buf_ofs == pState->file_stat.m_uncomp_size))
+    {
+        mz_uint8 extra;
+        mz_zip_reader_extract_iter_read(pState, &extra, 1);
+    }
+#endif
+/* [MiSTer-DB9 END] */
+
     /* Was decompression completed and requested? */
     if ((pState->status == TINFL_STATUS_DONE) && (!(pState->flags & MZ_ZIP_FLAG_COMPRESSED_DATA)))
     {
@@ -5084,6 +5232,11 @@ mz_bool mz_zip_reader_extract_iter_free(mz_zip_reader_extract_iter_state* pState
         pState->pZip->m_pFree(pState->pZip->m_pAlloc_opaque, pState->pRead_buf);
     if (pState->pWrite_buf)
         pState->pZip->m_pFree(pState->pZip->m_pAlloc_opaque, pState->pWrite_buf);
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+    ZSTD_freeDStream((ZSTD_DStream *)pState->pZstd_stream);
+#endif
+/* [MiSTer-DB9 END] */
 
     /* Save status */
     status = pState->status;
