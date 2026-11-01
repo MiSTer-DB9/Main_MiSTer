@@ -220,6 +220,13 @@ enum
 
 /* Method */
 #define MZ_DEFLATED 8
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+/* Zstandard compression method for ZIP entries (APPNOTE 6.3.8+). Decompression only. */
+#define MZ_ZSTD 93
+/* Method id APPNOTE 6.3.7 assigned to zstd before 6.3.8 moved it to 93; still read for old archives. */
+#define MZ_ZSTD_OLD 20
+#define MZ_IS_ZSTD(method) (((method) == MZ_ZSTD) || ((method) == MZ_ZSTD_OLD))
+/* [MiSTer-DB9 END] */
 
 /* Heap allocation callbacks.
 Note that mz_alloc_func parameter types purpsosely differ from zlib's: items/size is size_t, not unsigned long. */
@@ -1093,6 +1100,12 @@ typedef struct
     size_t out_blk_remain;
 
     tinfl_decompressor inflator;
+
+/* [MiSTer-DB9 BEGIN] - zstd ZIP entry support */
+#ifndef MINIZ_NO_ZSTD
+    void *pZstd_stream; /* ZSTD_DStream, only for MZ_ZSTD entries */
+#endif
+/* [MiSTer-DB9 END] */
 
 } mz_zip_reader_extract_iter_state;
 
