@@ -5732,8 +5732,8 @@ void HandleUI(void)
 		break;
 
 	case MENU_ST_SYSTEM1:
-		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: extended for UserIO Joystick (bit 16) and Players (bit 17)
-		menumask = 0x7fffb;
+		// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: extended for UserIO Joystick and Players (bits 18/19 after upstream Border entry shift)
+		menumask = 0xffffb;
 		// [MiSTer-DB9 END]
 		OsdSetTitle("Config", 0);
 		helptext_idx = 0;
@@ -5795,24 +5795,28 @@ void HandleUI(void)
 			else                                        strcat(s, "Full");
 			MenuWrite(m++, s, menusub == 11);
 
+			strcpy(s, " Border:     ");
+			strcat(s, (tos_get_extctrl() & 0x2000) ? "No" : "Yes");
+			MenuWrite(m++, s, menusub == 12);
+
 			strcpy(s, " Scale:      ");
 			strcat(s, config_scale[(tos_get_extctrl() >> 11) & 3]);
-			MenuWrite(m++, s, menusub == 12);
+			MenuWrite(m++, s, menusub == 13);
 
 			strcpy(s, " Scanlines:  ");
 			strcat(s, tos_scanlines[(tos_system_ctrl() >> 20) & 3]);
-			MenuWrite(m++, s, menusub == 13);
+			MenuWrite(m++, s, menusub == 14);
 			MenuWrite(m++);
 
 			strcpy(s, " Dongle:     ");
 			if (tos_system_ctrl() & TOS_CONTROL_DONGLE) strcat(s, "Cubase");
 			else                                        strcat(s, "None");
-			MenuWrite(m++, s, menusub == 14);
+			MenuWrite(m++, s, menusub == 15);
 			MenuWrite(m++);
 
 			strcpy(s, " YM-Audio:   ");
 			strcat(s, tos_stereo[(tos_system_ctrl() & TOS_CONTROL_STEREO) ? 1 : 0]);
-			MenuWrite(m++, s, menusub == 15);
+			MenuWrite(m++, s, menusub == 16);
 			MenuWrite(m++);
 
 			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players options
@@ -5820,15 +5824,15 @@ void HandleUI(void)
 				int uj = (tos_get_extctrl() >> 30) & 3;
 				strcpy(s, " UserIO Joy: ");
 				strcat(s, config_userio_joy_msg[uj]);
-				MenuWrite(m++, s, menusub == 16);
+				MenuWrite(m++, s, menusub == 17);
 				strcpy(s, " UserIO Ply: ");
 				strcat(s, (tos_get_extctrl() & 0x20000000u) ? "2 Players" : "1 Player");
-				MenuWrite(m++, s, menusub == 17, !uj);
+				MenuWrite(m++, s, menusub == 18, !uj);
 			}
 			// [MiSTer-DB9 END]
 			MenuWrite(m++);
 
-			MenuWrite(m++, STD_BACK, menusub == 18);
+			MenuWrite(m++, STD_BACK, menusub == 19);
 
 			if (!adjvisible) break;
 			firstmenu += adjvisible;
@@ -5952,6 +5956,11 @@ void HandleUI(void)
 				break;
 
 			case 12:
+				tos_set_extctrl(tos_get_extctrl() ^ 0x2000);
+				menustate = MENU_ST_SYSTEM1;
+				break;
+
+			case 13:
 				{
 					int mode = ((tos_get_extctrl() >> 11) + (minus ? -1 : 1)) & 3;
 					tos_set_extctrl((tos_get_extctrl() & ~0x1800) | (mode << 11));
@@ -5959,7 +5968,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 13:
+			case 14:
 				{
 					// next scanline state
 					int scan = ((tos_system_ctrl() >> 20) + (minus ? -1 : 1)) & 3;
@@ -5968,18 +5977,18 @@ void HandleUI(void)
 				}
 				break;
 
-			case 14:
+			case 15:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_DONGLE);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
-			case 15:
+			case 16:
 				tos_update_sysctrl(tos_system_ctrl() ^ TOS_CONTROL_STEREO);
 				menustate = MENU_ST_SYSTEM1;
 				break;
 
 			// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: UserIO Joystick and Players handlers
-			case 16:
+			case 17:
 				{
 					// Saturn first after Off to prevent ghost inputs from MD select line
 					int uio_joy = db9_extcfg_userio_next((tos_get_extctrl() >> 30) & 3, minus);
@@ -5988,7 +5997,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 17:
+			case 18:
 				if ((tos_get_extctrl() >> 30) & 3)
 				{
 					tos_set_extctrl(tos_get_extctrl() ^ 0x20000000u);
@@ -5997,7 +6006,7 @@ void HandleUI(void)
 				break;
 			// [MiSTer-DB9 END]
 
-			case 18:
+			case 19:
 				menustate = MENU_ST_MAIN1;
 				menusub = 5;
 				if (need_reset)
