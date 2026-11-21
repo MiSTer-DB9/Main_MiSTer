@@ -768,7 +768,7 @@ static void parse_config()
 				{
 					int idx = p[2] - '0';
 					StoreIdx_S(idx, str);
-					if (is_x86() || is_pcxt() || is_pcat286() || (is_uneon() && idx >= 2))
+					if (is_x86() || is_pcxt() || is_pcat286())
 					{
 						x86_set_image(idx, str);
 					}
@@ -1728,7 +1728,6 @@ void user_io_init(const char *path, const char *xml)
 				{
 					const char *home = HomeDir();
 
-					if (is_uneon()) x86_ide_set();
 					if (is_cdi()) cdi_load_root_nvram();
 					if (is_marty()) marty_init();
 					if (is_videobrain()) videobrain_init();
@@ -3474,7 +3473,6 @@ void user_io_send_buttons(char force)
 			if (is_pce()) pcecd_reset();
 			if (is_saturn()) saturn_reset();
 			if (is_x86() || is_pcxt() || is_pcat286()) x86_init();
-			if (is_uneon()) x86_ide_set();
 			if (is_st()) tos_reset(0);
 			if (is_3do()) p3do_reset();
 			ResetUART();
@@ -3542,6 +3540,12 @@ static unsigned long rtc_timer = 0;
 
 static int coldreset_req = 0;
 
+static uint32_t res_timer = 0;
+void user_io_reset_res_timer()
+{
+	res_timer = 0;
+}
+
 void user_io_poll()
 {
 	#ifdef PROFILING
@@ -3582,12 +3586,6 @@ void user_io_poll()
 			static uint8_t buffer[16][UIO_BUFFER_SIZE];
 			uint64_t lba = 0;
 			uint32_t blksz, blks, sz;
-
-			if (is_uneon() && i == 3)
-			{
-				x86_ide_poll();
-				break;
-			}
 
 			uint16_t c = spi_uio_cmd_cont(UIO_GET_SDSTAT);
 			if (c & 0x8000)
@@ -4071,9 +4069,16 @@ void user_io_poll()
 		if (info_n) show_core_info(info_n);
 	}
 
-	static uint32_t sdr_timer = 0;
+	if (!res_timer)
+	{
+		res_timer = GetTimer(1000);
+	}
+	else if (CheckTimer(res_timer))
+	{
+		if (is_menu())
+		{
 			static int got_cfg = 0;
-	if (!got_cfg && is_menu() && (!sdr_timer || CheckTimer(sdr_timer)))
+			if (!got_cfg)
 			{
 				spi_uio_cmd_cont(UIO_GET_OSDMASK);
 				sdram_cfg = spi_w(0);
@@ -4098,8 +4103,15 @@ void user_io_poll()
 						sdram_sz(0);
 					}
 				}
+			}
+		}
 
-		sdr_timer = GetTimer(500);
+		res_timer = GetTimer(500);
+		if (!minimig_get_adjust())
+		{
+			if (is_minimig()) minimig_adjust_vsize(0);
+			video_mode_adjust();
+		}
 	}
 
 	static int prev_coldreset_req = 0;
